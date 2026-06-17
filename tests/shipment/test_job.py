@@ -5,7 +5,7 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from src.shipment.job import _delete_before_date, _shipment_times
+from src.shipment.job import _shipment_times
 
 
 class ShipmentJobTest(unittest.TestCase):
@@ -24,13 +24,6 @@ class ShipmentJobTest(unittest.TestCase):
             shipment_times = _shipment_times(args)
 
         self.assertEqual(shipment_times, ["2026-06-13"])
-
-    def test_delete_before_date_keeps_yesterday_and_today(self) -> None:
-        with patch("src.shipment.job._today", return_value=date(2026, 6, 17)):
-            delete_before = _delete_before_date()
-
-        self.assertEqual(delete_before, "2026-06-16")
-
 
 if __name__ == "__main__":
     unittest.main()

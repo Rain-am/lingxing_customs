@@ -9,7 +9,6 @@ from src.shipment.export_mysql import (
     MYSQL_COLUMNS,
     MySQLConfig,
     MySQLExportError,
-    build_delete_before_sql,
     build_upsert_sql,
     export_customs_rows_to_mysql,
     mysql_row_values,
@@ -121,11 +120,6 @@ class ExportMySQLTest(unittest.TestCase):
         self.assertNotIn("`id`=VALUES(`id`)", update_clause)
         self.assertIn("`update_time`=VALUES(`update_time`)", update_clause)
 
-    def test_delete_before_sql_uses_confirm_shipment(self) -> None:
-        sql = build_delete_before_sql("customs_bill_parcels")
-
-        self.assertEqual(sql, "DELETE FROM `customs_bill_parcels` WHERE `confirm_shipment` < %s")
-
     def test_validate_table_columns_reports_missing_columns(self) -> None:
         columns = [column for _, column in MYSQL_COLUMNS if column not in {"tran_way", "update_time"}]
 
@@ -218,29 +212,10 @@ class ExportMySQLTest(unittest.TestCase):
 
         self.assertEqual(result.row_count, 1)
         self.assertEqual(result.table, "customs_bill_parcels")
-        self.assertIsNone(result.delete_before)
         self.assertEqual(fake_pymysql.connection.cursor_obj.executemany_calls, [])
         self.assertFalse(any("DELETE FROM" in sql for sql, _ in fake_pymysql.connection.cursor_obj.execute_calls))
 
-    def test_preflight_reports_delete_cutoff_without_deleting(self) -> None:
-        fake_pymysql = FakePyMySQL()
-        fake_pymysql.connection = FakeConnection(
-            columns=[column for _, column in MYSQL_COLUMNS],
-            indexes=[{"Key_name": "PRIMARY", "Non_unique": 0, "Seq_in_index": 1, "Column_name": "id"}],
-        )
-        config = mysql_config(use_ssh_tunnel=False)
-
-        with patch.object(export_mysql, "PyMySQLModule", fake_pymysql):
-            result = preflight_customs_rows_mysql(
-                CustomsWorkbookData(customs_rows=[sample_row()], issue_rows=[], purchase_split_rows=[]),
-                config,
-                delete_before="2026-06-16",
-            )
-
-        self.assertEqual(result.delete_before, "2026-06-16")
-        self.assertFalse(any("DELETE FROM" in sql for sql, _ in fake_pymysql.connection.cursor_obj.execute_calls))
-
-    def test_export_deletes_old_rows_before_upsert(self) -> None:
+    def test_export_upserts_without_deleting_old_rows(self) -> None:
         fake_pymysql = FakePyMySQL()
         fake_pymysql.connection = FakeConnection(
             columns=[column for _, column in MYSQL_COLUMNS],
@@ -252,15 +227,13 @@ class ExportMySQLTest(unittest.TestCase):
             row_count = export_customs_rows_to_mysql(
                 CustomsWorkbookData(customs_rows=[sample_row()], issue_rows=[], purchase_split_rows=[]),
                 config,
-                delete_before="2026-06-16",
             )
 
         self.assertEqual(row_count, 1)
-        delete_calls = [call for call in fake_pymysql.connection.cursor_obj.execute_calls if "DELETE FROM" in call[0]]
-        self.assertEqual(delete_calls, [("DELETE FROM `customs_bill_parcels` WHERE `confirm_shipment` < %s", ("2026-06-16",))])
+        self.assertFalse(any("DELETE FROM" in sql for sql, _ in fake_pymysql.connection.cursor_obj.execute_calls))
         self.assertEqual(len(fake_pymysql.connection.cursor_obj.executemany_calls), 1)
 
-    def test_export_still_deletes_old_rows_when_current_batch_is_empty(self) -> None:
+    def test_export_empty_batch_does_not_delete_old_rows(self) -> None:
         fake_pymysql = FakePyMySQL()
         fake_pymysql.connection = FakeConnection(
             columns=[column for _, column in MYSQL_COLUMNS],
@@ -272,11 +245,10 @@ class ExportMySQLTest(unittest.TestCase):
             row_count = export_customs_rows_to_mysql(
                 CustomsWorkbookData(customs_rows=[], issue_rows=[], purchase_split_rows=[]),
                 config,
-                delete_before="2026-06-16",
             )
 
         self.assertEqual(row_count, 0)
-        self.assertTrue(any("DELETE FROM" in sql for sql, _ in fake_pymysql.connection.cursor_obj.execute_calls))
+        self.assertFalse(any("DELETE FROM" in sql for sql, _ in fake_pymysql.connection.cursor_obj.execute_calls))
         self.assertEqual(fake_pymysql.connection.cursor_obj.executemany_calls, [])
 
     def test_export_rolls_back_only_when_connection_exists(self) -> None:

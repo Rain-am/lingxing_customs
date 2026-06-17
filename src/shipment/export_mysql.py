@@ -56,7 +56,6 @@ class MySQLPreflightResult:
     table: str
     row_count: int
     duplicate_id_count: int = 0
-    delete_before: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,7 +117,7 @@ class MySQLConfig:
         return config
 
 
-def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig | None = None, delete_before: str | None = None) -> int:
+def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig | None = None) -> int:
     config = config or MySQLConfig.from_env()
     rows = [mysql_row_values(row) for row in data.customs_rows]
 
@@ -128,8 +127,6 @@ def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig 
         connection, tunnel = _open_mysql_connection(config)
         with connection.cursor() as cursor:
             _validate_mysql_target(cursor, config.table, data)
-            if delete_before:
-                cursor.execute(build_delete_before_sql(config.table), (_mysql_shipment_day_value(delete_before),))
             if rows:
                 cursor.executemany(build_upsert_sql(config.table), rows)
         connection.commit()
@@ -148,7 +145,6 @@ def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig 
 def preflight_customs_rows_mysql(
     data: CustomsWorkbookData,
     config: MySQLConfig | None = None,
-    delete_before: str | None = None,
 ) -> MySQLPreflightResult:
     config = config or MySQLConfig.from_env()
     connection = None
@@ -162,7 +158,7 @@ def preflight_customs_rows_mysql(
             connection.close()
         if tunnel is not None:
             tunnel.stop()
-    return MySQLPreflightResult(table=config.table, row_count=len(data.customs_rows), duplicate_id_count=0, delete_before=delete_before)
+    return MySQLPreflightResult(table=config.table, row_count=len(data.customs_rows), duplicate_id_count=0)
 
 
 def _open_mysql_connection(config: MySQLConfig) -> tuple[Any, Any | None]:
@@ -249,10 +245,6 @@ def build_upsert_sql(table: str) -> str:
         if column != "id"
     )
     return f"INSERT INTO {_quote_identifier(table)} ({column_sql}) VALUES ({placeholders}) ON DUPLICATE KEY UPDATE {update_sql}"
-
-
-def build_delete_before_sql(table: str) -> str:
-    return f"DELETE FROM {_quote_identifier(table)} WHERE `confirm_shipment` < %s"
 
 
 def validate_table_columns(table_columns: Iterable[str]) -> None:

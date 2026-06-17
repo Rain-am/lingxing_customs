@@ -24,21 +24,18 @@ def run_shipment_job(args: Any) -> None:
     raw_data = _load_raw_data_for_dates(data_source, shipment_times)
     workbook_data = build_customs_workbook_data(raw_data)
     output_path = _export_with_available_path(workbook_data, Path(args.output))
-    delete_before = _delete_before_date()
     if args.db_preflight:
-        result = preflight_customs_rows_mysql(workbook_data, delete_before=delete_before)
+        result = preflight_customs_rows_mysql(workbook_data)
         print("MySQL preflight: OK")
         print(f"MySQL target table: {result.table}")
         print(f"MySQL rows ready: {result.row_count}")
         print(f"MySQL duplicate ids in current batch: {result.duplicate_id_count}")
-        print(f"MySQL delete cutoff: confirm_shipment < {result.delete_before}")
     if args.write_db:
-        result = preflight_customs_rows_mysql(workbook_data, delete_before=delete_before)
+        result = preflight_customs_rows_mysql(workbook_data)
         print("MySQL preflight: OK")
         print(f"MySQL target table: {result.table}")
         print(f"MySQL rows ready: {result.row_count}")
-        print(f"MySQL delete cutoff: confirm_shipment < {result.delete_before}")
-        db_rows = export_customs_rows_to_mysql(workbook_data, delete_before=delete_before)
+        db_rows = export_customs_rows_to_mysql(workbook_data)
         print(f"MySQL rows upserted: {db_rows}")
 
     print(f"Generated customs workbook: {output_path.resolve()}")
@@ -61,10 +58,6 @@ def _shipment_times(args: Any) -> list[str]:
         return [args.shipment_time]
     today = _today()
     return [(today - timedelta(days=1)).isoformat(), today.isoformat()]
-
-
-def _delete_before_date() -> str:
-    return (_today() - timedelta(days=1)).isoformat()
 
 
 def _today() -> date:
