@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, time
 from typing import Any
 
-from src.common.lingxing_client import LingxingClient
+from src.common.lingxing_client import LingxingClient, LingxingClientError
 from src.product.models import ProductListRow, ProductLoadStats, ProductRow
 
 
@@ -40,36 +40,43 @@ class ProductApiDataSource:
         if not rows_with_id:
             return []
 
-        list_has_status = any(row.batch_status for row in rows_with_id)
-        detail_source_rows = [row for row in rows_with_id if _is_enabled_status(row.batch_status) or not row.batch_status] if list_has_status else rows_with_id
-        if list_has_status:
-            self.stats.skipped_not_enabled = len(rows_with_id) - len(detail_source_rows)
-
         detail_by_id: dict[str, dict[str, Any]] = {}
         detail_by_sku: dict[str, dict[str, Any]] = {}
-        for product_ids in _chunks([row.product_id for row in detail_source_rows], _product_batch_size()):
-            self.stats.detail_request_count += 1
-            data = self.client.post(self.batch_product_detail_endpoint, {self.batch_product_detail_id_field: product_ids})
-            for payload in _extract_rows(data):
+        for product_ids in _chunks([row.product_id for row in rows_with_id], _product_batch_size()):
+            for payload in self._fetch_batch_product_details(product_ids):
                 product_id = str(_first(payload, "id", "product_id", "productId") or "")
                 sku = str(_first(payload, "sku", "seller_sku", "local_sku", "msku") or "")
                 if product_id:
                     detail_by_id[product_id] = payload
                 if sku:
                     detail_by_sku[sku] = payload
-        for row in detail_source_rows:
+        for row in rows_with_id:
             payload = detail_by_id.get(row.product_id) or detail_by_sku.get(row.sku)
             if not payload:
                 self.stats.detail_missing += 1
                 continue
             status = row.batch_status or str(_first(payload, "batch_status", "status", "product_status") or "").strip()
             _count_status(self.stats, status)
-            if not _is_enabled_status(status):
+            is_enabled = 1 if _is_enabled_status(status) else 0
+            if is_enabled:
+                self.stats.enabled_products += 1
+            else:
                 self.stats.skipped_not_enabled += 1
-                continue
-            self.stats.enabled_products += 1
-            product_rows.append(_map_product_row(row.sku, payload, row.update_time))
+            product_rows.append(_map_product_row(row.sku, payload, row.update_time, is_enabled))
         return product_rows
+
+    def _fetch_batch_product_details(self, product_ids: list[str]) -> list[dict[str, Any]]:
+        if not product_ids:
+            return []
+        try:
+            self.stats.detail_request_count += 1
+            data = self.client.post(self.batch_product_detail_endpoint, {self.batch_product_detail_id_field: product_ids})
+            return _extract_rows(data)
+        except LingxingClientError:
+            if len(product_ids) <= 1:
+                raise
+            middle = len(product_ids) // 2
+            return self._fetch_batch_product_details(product_ids[:middle]) + self._fetch_batch_product_details(product_ids[middle:])
 
     def _fetch_product_list_entries(
         self,
@@ -78,12 +85,16 @@ class ProductApiDataSource:
         end_date: str | None = None,
     ) -> list[ProductListRow]:
         entries: list[ProductListRow] = []
-        for row in self._fetch_product_list_rows(limit, start_date=start_date, end_date=end_date):
+        raw_rows = self._fetch_product_list_rows(limit, start_date=start_date, end_date=end_date)
+        self.stats.product_list_raw_rows = len(raw_rows)
+        for row in raw_rows:
             sku = str(_first(row, "sku", "seller_sku", "local_sku", "msku") or "")
             if not sku:
                 continue
             product_id = str(_first(row, "id", "product_id", "productId") or "")
             update_time = _format_update_time(_first(row, "update_time", "updated_at", "gmt_modified", "modify_time"))
+            if start_date and end_date and not _is_update_time_in_window(update_time, start_date, end_date):
+                continue
             batch_status = str(_first(row, "batch_status", "product_status") or "").strip()
             entries.append(ProductListRow(product_id=product_id, sku=sku, update_time=update_time, batch_status=batch_status))
         self.stats.product_list_rows = len(entries)
@@ -173,7 +184,7 @@ class ProductApiDataSource:
             raise RuntimeError("Real Lingxing product API endpoints are not configured: " + ", ".join(missing))
 
 
-def _map_product_row(sku: str, payload: dict[str, Any], update_time: str) -> ProductRow:
+def _map_product_row(sku: str, payload: dict[str, Any], update_time: str, is_enabled: int = 0) -> ProductRow:
     clearance = payload.get("clearance")
     if not isinstance(clearance, dict):
         clearance = {}
@@ -185,6 +196,7 @@ def _map_product_row(sku: str, payload: dict[str, Any], update_time: str) -> Pro
         customs_name_cn=str(payload.get("bg_customs_export_name") or ""),
         customs_code=str(payload.get("bg_export_hs_code") or ""),
         update_time=update_time,
+        is_enabled=is_enabled,
     )
 
 
@@ -211,14 +223,17 @@ def _chunks(values: list[str], chunk_size: int) -> list[list[str]]:
 def _product_list_payload(payload: dict[str, Any], start_date: str | None, end_date: str | None) -> dict[str, Any]:
     if start_date and end_date:
         payload = dict(payload)
-        payload.update(
-            {
-                "start_date": start_date,
-                "end_date": end_date,
-                "search_field_time": "update_time",
-            }
-        )
+        payload.update(_update_time_range_payload(start_date, end_date))
     return payload
+
+
+def _update_time_range_payload(start_date: str, end_date: str) -> dict[str, int]:
+    start_dt = datetime.combine(datetime.fromisoformat(start_date).date(), time.min)
+    end_dt = datetime.combine(datetime.fromisoformat(end_date).date(), time.max.replace(microsecond=0))
+    return {
+        "update_time_start": int(start_dt.timestamp()),
+        "update_time_end": int(end_dt.timestamp()),
+    }
 
 
 def _count_status(stats: ProductLoadStats, status: str) -> None:
@@ -258,6 +273,13 @@ def _format_update_time(value: Any) -> str:
         return text
 
 
+def _is_update_time_in_window(update_time: str, start_date: str, end_date: str) -> bool:
+    if len(update_time) < 10:
+        return False
+    update_date = update_time[:10]
+    return start_date <= update_date <= end_date
+
+
 def _client_page_size(client: Any) -> int:
     config = getattr(client, "config", None)
     page_size = getattr(config, "page_size", 100)
@@ -286,5 +308,5 @@ def _product_batch_size() -> int:
             value = int(env_value)
         except ValueError:
             value = 100
-        return value if value > 0 else 100
+        return min(value, 100) if value > 0 else 100
     return 100

@@ -17,6 +17,7 @@ PRODUCT_TABLE_COLUMNS = [
     ("customs_name_cn", "chinese_customs_name"),
     ("customs_code", "customs_code"),
     ("update_time", "update_time"),
+    ("is_enabled", "is_enabled"),
 ]
 
 

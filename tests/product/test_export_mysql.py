@@ -36,7 +36,9 @@ class ProductExportMySQLTest(unittest.TestCase):
         update_sql, update_rows = connection.cursor_obj.executemany_calls[1]
         self.assertIn("INSERT INTO `customs_product`", insert_sql)
         self.assertEqual(insert_rows[0][0], "SKU-NEW")
+        self.assertEqual(insert_rows[0][-1], 1)
         self.assertIn("UPDATE `customs_product`", update_sql)
+        self.assertIn("`is_enabled`=%s", update_sql)
         self.assertEqual(update_rows[0][-1], "SKU-OLD")
 
     def test_export_dedupes_duplicate_sku_before_writing(self) -> None:
@@ -88,6 +90,7 @@ def product_row(sku: str, update_time: str, product_name: str = "Product") -> Pr
         customs_name_cn="Clothing",
         customs_code="6109100000",
         update_time=update_time,
+        is_enabled=1,
     )
 
 

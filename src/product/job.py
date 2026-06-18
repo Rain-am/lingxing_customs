@@ -23,7 +23,8 @@ def run_product_job(args: Any) -> None:
         print(f"Product update_time window: {start_date} ~ {end_date}")
     rows = data_source.load_all(start_date=start_date, end_date=end_date)
     stats = data_source.stats
-    print(f"Product list rows: {stats.product_list_rows}")
+    print(f"Product list raw rows: {stats.product_list_raw_rows}")
+    print(f"Product list rows in update_time window: {stats.product_list_rows}")
     print(f"Product rows without id skipped: {stats.products_without_id}")
     print(f"Enabled product rows: {stats.enabled_products}")
     print(f"Non-enabled product rows skipped: {stats.skipped_not_enabled}")

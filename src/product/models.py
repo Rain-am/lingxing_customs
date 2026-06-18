@@ -20,10 +20,12 @@ class ProductRow:
     customs_name_cn: str = ""
     customs_code: str = ""
     update_time: str = ""
+    is_enabled: int = 0
 
 
 @dataclass
 class ProductLoadStats:
+    product_list_raw_rows: int = 0
     product_list_rows: int = 0
     products_without_id: int = 0
     enabled_products: int = 0
