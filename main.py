@@ -64,6 +64,14 @@ def parse_args() -> argparse.Namespace:
         help="For --job product, delete customs_product rows first and reload all enabled products.",
     )
     parser.add_argument(
+        "--product-start-date",
+        help="For --job product, product update_time start date, for example 2026-06-17.",
+    )
+    parser.add_argument(
+        "--product-end-date",
+        help="For --job product, product update_time end date, for example 2026-06-18.",
+    )
+    parser.add_argument(
         "--db-preflight",
         action="store_true",
         help="Check MySQL connection, table columns, unique id index, and row ids without writing data.",
@@ -100,6 +108,13 @@ def parse_args() -> argparse.Namespace:
         parser.error("--product-full-refresh is only supported for --job product")
     if args.product_full_refresh and not args.write_db:
         parser.error("--product-full-refresh requires --write-db")
+    product_date_args = [args.product_start_date, args.product_end_date]
+    if any(product_date_args) and args.job != "product":
+        parser.error("--product-start-date and --product-end-date are only supported for --job product")
+    if any(product_date_args) and not all(product_date_args):
+        parser.error("--product-start-date and --product-end-date must be used together")
+    if args.product_full_refresh and any(product_date_args):
+        parser.error("--product-full-refresh cannot be used with --product-start-date/--product-end-date")
     if args.write_db and args.db_preflight:
         parser.error("--write-db and --db-preflight cannot be used together")
     if args.job == "product-preview" and not args.output:

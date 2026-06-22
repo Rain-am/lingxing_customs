@@ -18,7 +18,10 @@ def run_product_job(args: Any) -> None:
     if product_full_refresh:
         print("Product sync mode: full refresh")
     else:
-        start_date, end_date = _default_incremental_window()
+        start_date = getattr(args, "product_start_date", None)
+        end_date = getattr(args, "product_end_date", None)
+        if not (start_date and end_date):
+            start_date, end_date = _default_incremental_window()
         print("Product sync mode: incremental")
         print(f"Product update_time window: {start_date} ~ {end_date}")
     rows = data_source.load_all(start_date=start_date, end_date=end_date)

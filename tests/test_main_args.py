@@ -37,6 +37,54 @@ class MainArgsTest(unittest.TestCase):
         self.assertIsNone(args.output)
         self.assertFalse(args.product_full_refresh)
 
+    def test_product_update_time_range_args(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--job",
+                "product",
+                "--write-db",
+                "--product-start-date",
+                "2026-06-17",
+                "--product-end-date",
+                "2026-06-18",
+            ],
+        ):
+            args = main.parse_args()
+
+        self.assertEqual(args.product_start_date, "2026-06-17")
+        self.assertEqual(args.product_end_date, "2026-06-18")
+
+    def test_product_update_time_range_requires_both_dates(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--job", "product", "--write-db", "--product-start-date", "2026-06-17"],
+        ):
+            with self.assertRaises(SystemExit):
+                main.parse_args()
+
+    def test_product_update_time_range_conflicts_with_full_refresh(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--job",
+                "product",
+                "--write-db",
+                "--product-full-refresh",
+                "--product-start-date",
+                "2026-06-17",
+                "--product-end-date",
+                "2026-06-18",
+            ],
+        ):
+            with self.assertRaises(SystemExit):
+                main.parse_args()
+
     def test_product_full_refresh_args(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--job", "product", "--write-db", "--product-full-refresh"]):
             args = main.parse_args()
