@@ -299,6 +299,47 @@ class LingxingApiDataSourceTest(unittest.TestCase):
             [{"start_date": "2026-05-25", "end_date": "2026-05-25", "search_field_time": "create_time", "purchase_sn": "PO260525005"}],
         )
 
+    def test_supplier_infos_are_fetched_realtime_and_ignore_cache(self) -> None:
+        source = LingxingApiDataSource(client=EnrichmentClient())
+        source.cache.set("supplier_infos", "all", {"Supplier A": {"account_name": "Old Supplier", "url": "https://old.example.com"}})
+
+        supplier_infos = source._fetch_supplier_infos()
+
+        self.assertEqual(supplier_infos["Supplier A"]["url"], "https://supplier.example.com")
+        self.assertEqual(supplier_infos["Supplier A"]["account_name"], "\u4e49\u4e4c\u6d4b\u8bd5\u516c\u53f8")
+        cached = source.cache.get("supplier_infos", "all", ttl_days=1)
+        self.assertEqual(cached["Supplier A"]["url"], "https://old.example.com")
+
+    def test_supplier_url_is_used_as_domestic_source_for_zhuji_supplier(self) -> None:
+        class ZhujiSupplierClient(EnrichmentClient):
+            def post(self, endpoint, payload):
+                self.post_payloads.append((endpoint, payload))
+                if endpoint.endswith("getInboundShipmentList"):
+                    rows = [{"shipment_sn": "SP260623003", "pick_time": "2026-06-23", "status": 1, "wname": WAREHOUSE}] if payload.get("page", 1) == 1 else []
+                    return {"code": 0, "data": {"list": rows}}
+                if endpoint.endswith("purchaseOrderList"):
+                    return {"code": 0, "data": {"list": [{"order_sn": "PO260525005", "purchaser_id": 7, "supplier_name": "SU00004-YZ"}]}}
+                if endpoint.endswith("supplier"):
+                    return {
+                        "code": 0,
+                        "data": {
+                            "list": [
+                                {
+                                    "supplier_name": "SU00004-YZ",
+                                    "account_name": "\u8bf8\u66a8\u5e02\u5955\u81fb\u9488\u7ec7\u6709\u9650\u516c\u53f8",
+                                    "url": "\u6d59\u6c5f\u8bf8\u66a8",
+                                }
+                            ]
+                        },
+                    }
+                return super().post(endpoint, payload)
+
+        raw = LingxingApiDataSource(client=ZhujiSupplierClient()).load("2026-06-23")
+
+        self.assertEqual(raw.purchase_batches[0].shipment_no, "SP260623003")
+        self.assertEqual(raw.purchase_batches[0].supplier, "\u8bf8\u66a8\u5e02\u5955\u81fb\u9488\u7ec7\u6709\u9650\u516c\u53f8")
+        self.assertEqual(raw.purchase_batches[0].domestic_source, "\u6d59\u6c5f\u8bf8\u66a8")
+
     def test_transport_method_falls_back_to_normalized_method_name_when_track_list_empty(self) -> None:
         class EmptyTrackListClient(EnrichmentClient):
             def post(self, endpoint, payload):

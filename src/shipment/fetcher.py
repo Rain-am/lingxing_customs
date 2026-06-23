@@ -346,13 +346,6 @@ class LingxingApiDataSource(CustomsDataSource):
     def _fetch_supplier_infos(self) -> dict[str, dict[str, str]]:
         if not self.supplier_list_endpoint:
             return {}
-        cached = self.cache.get("supplier_infos", "all", ttl_days=1)
-        if isinstance(cached, dict):
-            return {
-                str(key): {"account_name": str(value.get("account_name", "")), "url": str(value.get("url", ""))}
-                for key, value in cached.items()
-                if isinstance(value, dict)
-            }
         try:
             rows = self._fetch_offset_rows(self.supplier_list_endpoint)
         except LingxingClientError:
@@ -366,7 +359,6 @@ class LingxingApiDataSource(CustomsDataSource):
             supplier_info = {"account_name": account_name, "url": str(source or "")}
             for name in _supplier_match_names(row, account_name):
                 infos[name] = supplier_info
-        self.cache.set("supplier_infos", "all", infos)
         return infos
 
     def _fetch_offset_rows(self, endpoint: str) -> list[dict[str, Any]]:
