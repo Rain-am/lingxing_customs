@@ -11,5 +11,6 @@ build/
 *.egg-info/
 output/
 logs/
+data/
 deploy_package/
 .tmp_download/

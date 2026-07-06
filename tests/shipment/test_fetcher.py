@@ -65,6 +65,7 @@ class EnrichmentClient(FakeClient):
                         {
                             "sku": "00123",
                             "quantity": 2,
+                            "sname": "YYOUNG-US",
                             "box_no": "BOX-1",
                             "method_name": "海运",
                             "fba_stock_cost": "5.50",
@@ -284,6 +285,7 @@ class LingxingApiDataSourceTest(unittest.TestCase):
         raw = source.load("2026-06-09")
 
         self.assertEqual(raw.shipment_items[0].shipment_date, "2026-06-09")
+        self.assertEqual(raw.shipment_items[0].seller_name, "YYOUNG-US")
         self.assertEqual(raw.shipment_items[0].box_no, "BOX-1")
         self.assertEqual(raw.shipment_items[0].transport_method, "Rail")
         self.assertEqual(raw.sku_infos["00123"].customs_name_cn, "Customs Name")

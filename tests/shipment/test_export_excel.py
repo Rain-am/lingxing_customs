@@ -32,12 +32,13 @@ class ExportExcelTest(unittest.TestCase):
             self.assertIn('<c r="B1" t="inlineStr" s="1"><is><t>确定出运月份</t></is></c>', sheet_xml)
             self.assertIn('<c r="B2" t="inlineStr"><is><t>2026-', sheet_xml)
             self.assertIn('r="A2" t="inlineStr" s="3"', sheet_xml)
-            self.assertIn('r="G2" t="inlineStr" s="3"', sheet_xml)
-            self.assertIn('<c r="K1" t="inlineStr" s="1"><is><t>英文报关品名</t></is></c>', sheet_xml)
-            self.assertIn('<c r="S1" t="inlineStr" s="1"><is><t>物流渠道</t></is></c>', sheet_xml)
-            self.assertIn('<c r="T1" t="inlineStr" s="1"><is><t>运输方式</t></is></c>', sheet_xml)
+            self.assertIn('<c r="D1" t="inlineStr" s="1"><is><t>店铺</t></is></c>', sheet_xml)
+            self.assertIn('r="H2" t="inlineStr" s="3"', sheet_xml)
+            self.assertIn('<c r="L1" t="inlineStr" s="1"><is><t>英文报关品名</t></is></c>', sheet_xml)
+            self.assertIn('<c r="T1" t="inlineStr" s="1"><is><t>物流渠道</t></is></c>', sheet_xml)
+            self.assertIn('<c r="U1" t="inlineStr" s="1"><is><t>运输方式</t></is></c>', sheet_xml)
             self.assertNotIn("物流方式", sheet_xml)
-            self.assertIn('<c r="AC1" t="inlineStr" s="1"><is><t>更新时间</t></is></c>', sheet_xml)
+            self.assertIn('<c r="AD1" t="inlineStr" s="1"><is><t>更新时间</t></is></c>', sheet_xml)
 
 
 if __name__ == "__main__":

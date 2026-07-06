@@ -27,6 +27,7 @@ def sample_row() -> CustomsRow:
         shipment_date="2026-06",
         shipment_day="2026-06-09",
         shipment_no="SP260609001",
+        seller_name="YYOUNG-US",
         purchase_entity="采购方",
         supplier="供应商",
         domestic_source="供应商地址",
@@ -63,6 +64,7 @@ class ExportMySQLTest(unittest.TestCase):
             "confirm_shipment_month",
             "confirm_shipment",
             "tran_id",
+            "seller_name",
             "working_corp_name",
             "supplier_name",
             "supplier_addr",
@@ -97,10 +99,11 @@ class ExportMySQLTest(unittest.TestCase):
         self.assertEqual(values[0], "abc123")
         self.assertEqual(values[1], "2026-06")
         self.assertEqual(values[2], "2026-06-09")
-        self.assertEqual(values[14], "")
-        self.assertEqual(values[20], "快递")
-        self.assertEqual(values[24], "1")
-        self.assertEqual(values[25], "21.41")
+        self.assertEqual(values[4], "YYOUNG-US")
+        self.assertEqual(values[15], "")
+        self.assertEqual(values[21], "快递")
+        self.assertEqual(values[25], "1")
+        self.assertEqual(values[26], "21.41")
 
     def test_mysql_row_values_convert_invalid_shipment_month_to_null(self) -> None:
         row = sample_row()

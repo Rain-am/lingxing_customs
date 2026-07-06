@@ -11,6 +11,7 @@ CUSTOMS_HEADERS = [
     ("id", "id"),
     ("shipment_date", "确定出运月份"),
     ("shipment_no", "发货单号"),
+    ("seller_name", "店铺"),
     ("purchase_entity", "采购主体"),
     ("supplier", "供应商"),
     ("domestic_source", "境内货源地"),
