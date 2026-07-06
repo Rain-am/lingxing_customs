@@ -56,6 +56,18 @@ class OverseasClient:
                         {
                             "overseas_order_no": "OW260703001",
                             "update_time": 1783094400000,
+                            "products": [
+                                {
+                                    "sku": "SKU-OW-1",
+                                    "batch_record_list": [
+                                        {
+                                            "purchase_order_sns": ["PO260701001"],
+                                            "supplier_names": ["Fallback Supplier"],
+                                            "unit_storage_cost": "3.25",
+                                        }
+                                    ],
+                                }
+                            ],
                         }
                     ]
                 },
@@ -69,7 +81,10 @@ class OverseasClient:
                     "logistics_name": "Carrier (Overseas Carrier Company)",
                     "logistics_way_name": "Fast Channel",
                     "logisticsInfo": {
-                        "head_logistics_tracking_info": {"transport_type_name": "海运"},
+                        "head_logistics_tracking_info": [
+                            {"transport_type_name": "快递"},
+                            {"transport_type_name": "海运"},
+                        ],
                     },
                     "total": {"package_num": 24},
                     "products": [
@@ -78,13 +93,6 @@ class OverseasClient:
                             "product_name": "Overseas Product",
                             "awd_shipment_id": "AWD-1",
                             "seller_arr": [{"seller_name": "Shop A"}],
-                            "batch_record_list": [
-                                {
-                                    "purchase_order_sns": ["PO260701001"],
-                                    "supplier_names": ["Fallback Supplier"],
-                                    "unit_storage_cost": "3.25",
-                                }
-                            ],
                         }
                     ],
                 },
@@ -106,6 +114,16 @@ class OverseasClient:
                     "box_data": {
                         "box_content": [
                             {
+                                "boxInfo": {
+                                    "total_box_weight": "99.99",
+                                    "total_box_volume": "9.999999",
+                                },
+                                "box_list": [
+                                    {"box_no": "1-56", "length": "99", "width": "99", "height": "99"},
+                                ],
+                            },
+                            {
+                                "sku": "SKU-OW-1",
                                 "boxInfo": {
                                     "total_box_weight": "11.50",
                                     "total_box_volume": "0.123456",
@@ -188,6 +206,20 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
                                     "supplier_names": ["Fallback Supplier"],
                                     "unit_storage_cost": "4.25",
                                 }
+                            ],
+                        }
+                    )
+                if endpoint.endswith("/owms/inbound/getPackingData"):
+                    data["data"]["box_data"]["box_content"].append(
+                        {
+                            "sku": "SKU-OW-2",
+                            "boxInfo": {
+                                "total_box_weight": "11.50",
+                                "total_box_volume": "0.123456",
+                            },
+                            "box_list": [
+                                {"box_no": "BOX-35", "length": "10", "width": "20", "height": "30"},
+                                {"box_no": "BOX-36", "length": "10", "width": "20", "height": "30"},
                             ],
                         }
                     )

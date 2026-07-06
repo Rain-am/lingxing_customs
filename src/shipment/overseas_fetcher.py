@@ -187,7 +187,8 @@ def _map_overseas_detail(
     packing_data: dict[str, Any],
     awd_center_codes: dict[str, str],
 ) -> tuple[list[ShipmentItem], list[PurchaseBatch]]:
-    products = _product_rows(detail)
+    products = _product_rows(detail) or _product_rows(header)
+    header_products = _products_by_sku(header)
     box_info = _packing_box_info(packing_data)
     shipment_no = str(_first(detail, header, "overseas_order_no", "order_no", "orderNo", "inbound_no", "inboundNo", "id") or "")
     shipment_date = _date_text(_first(detail, header, "real_delivery_time"))
@@ -197,6 +198,7 @@ def _map_overseas_detail(
 
     for product in products:
         sku = str(_first(product, {}, "sku", "seller_sku", "local_sku") or "")
+        product = _merge_product(product, header_products.get(sku, {}))
         product_box_info = _box_info_for_product(box_info, sku)
         box_no = _format_box_no(_box_no(product_box_info))
         box_count = ""
@@ -217,8 +219,8 @@ def _map_overseas_detail(
             box_count=box_count,
             logistics_provider=_logistics_provider(str(_first(detail, header, "logistics_name", "logisticsName") or "")),
             logistics_channel=str(_first(detail, header, "logistics_way_name", "logisticsWayName") or ""),
-            transport_method=_overseas_transport_method(detail),
-            logistics_center_code=awd_center_codes.get(awd_shipment_id, ""),
+            transport_method=_overseas_transport_method(detail, str(_first(detail, header, "logistics_way_name", "logisticsWayName") or "")),
+            logistics_center_code=awd_center_codes.get(awd_shipment_id, "") or _product_center_code(product, detail, header),
             volume=total_box_volume,
             total_gross_weight=total_gross_weight,
             outer_box_size=_outer_box_size(product_box_info),
@@ -267,6 +269,27 @@ def _product_rows(detail: dict[str, Any]) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)]
 
 
+def _products_by_sku(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for product in _product_rows(payload):
+        sku = str(_first(product, {}, "sku", "seller_sku", "local_sku") or "")
+        if sku and sku not in result:
+            result[sku] = product
+    return result
+
+
+def _merge_product(detail_product: dict[str, Any], header_product: dict[str, Any]) -> dict[str, Any]:
+    if not header_product:
+        return detail_product
+    merged = dict(header_product)
+    merged.update({key: value for key, value in detail_product.items() if value not in (None, "", [])})
+    if not merged.get("batch_record_list") and header_product.get("batch_record_list"):
+        merged["batch_record_list"] = header_product["batch_record_list"]
+    if not merged.get("batchRecordList") and header_product.get("batchRecordList"):
+        merged["batchRecordList"] = header_product["batchRecordList"]
+    return merged
+
+
 def _seller_name(product: dict[str, Any]) -> str:
     sellers = _as_list(product.get("seller_arr") or product.get("sellerArr"))
     for seller in sellers:
@@ -277,17 +300,28 @@ def _seller_name(product: dict[str, Any]) -> str:
     return str(_first(product, {}, "seller_name", "sellerName", "sname") or "")
 
 
-def _overseas_transport_method(detail: dict[str, Any]) -> str:
+def _overseas_transport_method(detail: dict[str, Any], logistics_channel: str = "") -> str:
     logistics_info = detail.get("logisticsInfo") or detail.get("logistics_info") or {}
     tracking_rows = []
     if isinstance(logistics_info, dict):
         tracking_rows = _as_list(logistics_info.get("head_logistics_tracking_info") or logistics_info.get("headLogisticsTrackingInfo"))
+    candidates: list[str] = []
     for tracking in tracking_rows:
         if not isinstance(tracking, dict):
             continue
         normalized = _normalize_transport(str(tracking.get("transport_type_name") or tracking.get("transportTypeName") or ""))
         if normalized:
-            return normalized
+            candidates.append(normalized)
+    for candidate in candidates:
+        if candidate == "\u6d77\u8fd0":
+            return candidate
+    channel_transport = _normalize_transport(logistics_channel)
+    if channel_transport == "\u6d77\u8fd0":
+        return channel_transport
+    if candidates:
+        return candidates[0]
+    if channel_transport:
+        return channel_transport
     return ""
 
 
@@ -296,7 +330,7 @@ def _normalize_transport(value: str) -> str:
     if not text:
         return ""
     lower_text = text.lower()
-    if "\u6d77" in text or "sea" in lower_text or "ocean" in lower_text:
+    if "\u6d77" in text or "\u7f8e\u68ee" in text or "sea" in lower_text or "ocean" in lower_text:
         return "\u6d77\u8fd0"
     if "\u9646" in text or "land" in lower_text or "truck" in lower_text:
         return "\u9646\u8fd0"
@@ -311,6 +345,14 @@ def _logistics_provider(value: str) -> str:
     if match:
         return match.group(1).strip()
     return text
+
+
+def _product_center_code(product: dict[str, Any], detail: dict[str, Any], header: dict[str, Any]) -> str:
+    return str(
+        _first(product, detail, "warehouseReferenceId", "warehouse_reference_id", "logistics_center_code", "center_id", "warehouse_code")
+        or _first(header, {}, "warehouseReferenceId", "warehouse_reference_id", "logistics_center_code", "center_id", "warehouse_code")
+        or ""
+    )
 
 
 def _total_package_num(detail: dict[str, Any]) -> Any:
@@ -409,7 +451,9 @@ def _packing_box_info(packing_data: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         box_info = content.get("boxInfo") or content.get("box_info") or {}
         box_list = content.get("box_list") or content.get("boxList") or []
-        merged = dict(box_info if isinstance(box_info, dict) else {})
+        merged = dict(content)
+        if isinstance(box_info, dict):
+            merged.update(box_info)
         root_box_count = _first(payload, {}, "box_count", "boxCount")
         if root_box_count not in (None, "") and "box_count" not in merged:
             merged["box_count"] = root_box_count
