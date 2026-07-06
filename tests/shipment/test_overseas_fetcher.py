@@ -27,6 +27,27 @@ class OverseasClient:
                     ]
                 },
             }
+        if endpoint.endswith("/local_inventory/purchaseOrderList"):
+            return {
+                "code": 0,
+                "data": {
+                    "list": [
+                        {
+                            "purchase_sn": "PO260701001",
+                            "supplier_name": "Supplier A",
+                        }
+                    ]
+                },
+            }
+        if endpoint.endswith("/local_inventory/productInfo"):
+            return {
+                "code": 0,
+                "data": {
+                    "sku": payload["sku"],
+                    "unit": "pcs",
+                    "bg_customs_export_name": "Customs CN",
+                },
+            }
         if endpoint.endswith("/owms/inbound/listInbound"):
             return {
                 "code": 0,
@@ -45,7 +66,7 @@ class OverseasClient:
                 "data": {
                     "real_delivery_time": "2026-07-03 09:30:00",
                     "overseas_order_no": "OW260703001",
-                    "logistics_name": "Overseas Carrier",
+                    "logistics_name": "Carrier (Overseas Carrier Company)",
                     "logistics_way_name": "Fast Channel",
                     "logisticsInfo": {
                         "head_logistics_tracking_info": {"transport_type_name": "海运"},
@@ -59,7 +80,8 @@ class OverseasClient:
                             "seller_arr": [{"seller_name": "Shop A"}],
                             "batch_record_list": [
                                 {
-                                    "supplier_names": ["Supplier A"],
+                                    "purchase_order_sns": ["PO260701001"],
+                                    "supplier_names": ["Fallback Supplier"],
                                     "unit_storage_cost": "3.25",
                                 }
                             ],
@@ -89,8 +111,8 @@ class OverseasClient:
                                     "total_box_volume": "0.123456",
                                 },
                                 "box_list": [
-                                    {"box_no": "BOX-1", "length": "10", "width": "20", "height": "30"},
-                                    {"box_no": "BOX-2", "length": "10", "width": "20", "height": "30"},
+                                    {"box_no": "BOX-35", "length": "10", "width": "20", "height": "30"},
+                                    {"box_no": "BOX-36", "length": "10", "width": "20", "height": "30"},
                                 ],
                             }
                         ]
@@ -116,12 +138,12 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(item.purchase_unit_price, Decimal("3.25"))
         self.assertEqual(item.supplier, "Supplier A Company")
         self.assertEqual(item.domestic_source, "浙江义乌")
-        self.assertEqual(item.logistics_provider, "Overseas Carrier")
+        self.assertEqual(item.logistics_provider, "Overseas Carrier Company")
         self.assertEqual(item.logistics_channel, "Fast Channel")
         self.assertEqual(item.transport_method, "海运")
         self.assertEqual(item.logistics_center_code, "AWD-CENTER-1")
-        self.assertEqual(item.box_no, "BOX-1\nBOX-2")
-        self.assertEqual(item.box_count, Decimal("2"))
+        self.assertEqual(item.box_no, "35-36")
+        self.assertEqual(item.box_count, "")
         self.assertEqual(item.total_gross_weight, Decimal("11.50"))
         self.assertEqual(item.outer_box_size, "10*20*30")
         self.assertEqual(item.volume, Decimal("0.123456"))
@@ -130,6 +152,7 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         batch = raw.purchase_batches[0]
         self.assertEqual(batch.supplier, "Supplier A Company")
         self.assertEqual(batch.domestic_source, "浙江义乌")
+        self.assertEqual(batch.purchase_sn, "PO260701001")
         self.assertEqual(batch.purchase_unit_price, Decimal("3.25"))
 
     def test_overseas_rows_can_build_customs_rows(self) -> None:
@@ -142,9 +165,42 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(row.shipment_day, "2026-07-03")
         self.assertEqual(row.shipment_no, "OW260703001")
         self.assertEqual(row.seller_name, "Shop A")
-        self.assertEqual(row.box_no, "BOX-1,BOX-2")
-        self.assertEqual(row.box_count, Decimal("2"))
-        self.assertEqual(row.total_net_weight, Decimal("9.50"))
+        self.assertEqual(row.box_no, "35-36")
+        self.assertEqual(row.box_count, "")
+        self.assertEqual(row.total_net_weight, Decimal("11.50"))
+        self.assertEqual(row.customs_name_cn, "Customs CN")
+        self.assertEqual(row.unit, "pcs")
+
+    def test_overseas_duplicate_box_metrics_are_not_zeroed(self) -> None:
+        class MultiSkuClient(OverseasClient):
+            def post(self, endpoint, payload):
+                data = super().post(endpoint, payload)
+                if endpoint.endswith("/overSeaWarehouse/stockOrder/detail"):
+                    data["data"]["products"].append(
+                        {
+                            "sku": "SKU-OW-2",
+                            "product_name": "Overseas Product 2",
+                            "awd_shipment_id": "AWD-1",
+                            "seller_arr": [{"seller_name": "Shop A"}],
+                            "batch_record_list": [
+                                {
+                                    "purchase_order_sns": ["PO260701001"],
+                                    "supplier_names": ["Fallback Supplier"],
+                                    "unit_storage_cost": "4.25",
+                                }
+                            ],
+                        }
+                    )
+                return data
+
+        raw = OverseasWarehouseApiDataSource(client=MultiSkuClient()).load("2026-07-03")
+
+        workbook = build_customs_workbook_data(raw)
+
+        self.assertEqual(len(workbook.customs_rows), 2)
+        self.assertTrue(all(row.total_gross_weight == Decimal("11.50") for row in workbook.customs_rows))
+        self.assertTrue(all(row.outer_box_size == "10*20*30" for row in workbook.customs_rows))
+        self.assertTrue(all(row.volume == Decimal("0.123456") for row in workbook.customs_rows))
 
 
 if __name__ == "__main__":

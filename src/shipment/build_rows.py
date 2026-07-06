@@ -252,7 +252,7 @@ def _build_row(
 ) -> CustomsRow:
     ratio = _quantity_ratio(item, quantity)
     box_no = _display_box_no(item.box_no)
-    box_count = _box_count_from_box_no(box_no) or item.box_count
+    box_count = item.box_count if item.source == "overseas" else (_box_count_from_box_no(box_no) or item.box_count)
     total_gross_weight = _row_gross_weight(item, sku_info, quantity, ratio)
     total_net_weight = _row_net_weight(item, sku_info, quantity, ratio, total_gross_weight, box_count)
     volume = _row_volume(item, sku_info, ratio)
@@ -292,6 +292,7 @@ def _build_row(
         total_net_weight=total_net_weight,
         outer_box_size=item.outer_box_size or sku_info.outer_box_size or PENDING,
         volume=volume,
+        source=item.source,
     )
 
 
@@ -411,10 +412,10 @@ def _row_net_weight(
     quantity: Decimal,
     ratio: Decimal,
     total_gross_weight: Decimal | str,
-    box_count: Decimal,
+    box_count: Decimal | str,
 ) -> Decimal | str:
     if isinstance(total_gross_weight, Decimal):
-        return total_gross_weight - box_count
+        return total_gross_weight - box_count if isinstance(box_count, Decimal) else total_gross_weight
     if sku_info.net_weight is not None:
         return sku_info.net_weight * quantity
     return PENDING
@@ -423,6 +424,8 @@ def _row_net_weight(
 def _row_volume(item: ShipmentItem, sku_info: SkuInfo, ratio: Decimal) -> Decimal | str:
     if item.volume is not None:
         return item.volume
+    if not isinstance(item.box_count, Decimal):
+        return PENDING
     return _calculate_volume(sku_info, item.box_count)
 
 
@@ -455,6 +458,8 @@ def _sort_and_zero_duplicate_box_metrics(rows: list[CustomsRow]) -> None:
     seen: set[tuple[str, str]] = set()
     for row in rows:
         key = (row.shipment_no, row.box_no)
+        if row.source == "overseas":
+            continue
         if not row.box_no or key not in seen:
             if row.box_no:
                 seen.add(key)

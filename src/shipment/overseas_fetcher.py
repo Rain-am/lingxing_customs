@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 from decimal import Decimal
 from dataclasses import replace
 from typing import Any
 
 from src.common.lingxing_client import LingxingClient, LingxingClientError
+from src.shipment.build_rows import _format_box_no
 from src.shipment.fetcher import (
+    LingxingApiDataSource,
     _as_list,
     _date_text,
     _extract_rows,
     _first,
+    _first_matching_any,
     _optional_decimal,
-    _select_supplier_account_name,
-    _supplier_match_names,
 )
 from src.shipment.models import PurchaseBatch, RawCustomsData, ShipmentItem, SkuInfo, decimal_or_zero
 
@@ -33,6 +35,7 @@ class OverseasWarehouseApiDataSource:
         )
         self.packing_data_endpoint = os.getenv("LINGXING_OVERSEAS_PACKING_DATA_ENDPOINT", "/erp/sc/routing/owms/inbound/getPackingData")
         self.supplier_list_endpoint = os.getenv("LINGXING_SUPPLIER_LIST_ENDPOINT", "/erp/sc/data/local_inventory/supplier")
+        self.common_source = LingxingApiDataSource(client=self.client, refresh_cache=refresh_cache)
 
     def load(self, shipment_time: str | None = None) -> RawCustomsData:
         self._validate_config()
@@ -41,7 +44,6 @@ class OverseasWarehouseApiDataSource:
         purchase_batches: list[PurchaseBatch] = []
         sku_infos: dict[str, SkuInfo] = {}
 
-        supplier_infos = self._fetch_supplier_infos()
         for header in headers:
             detail = self._fetch_detail(header)
             detail_data = detail.get("data", detail)
@@ -50,12 +52,14 @@ class OverseasWarehouseApiDataSource:
             packing_data = self._fetch_packing_data(header, detail_data)
             awd_center_codes = self._fetch_awd_center_codes(detail_data)
             items, batches = _map_overseas_detail(header, detail_data, packing_data, awd_center_codes)
-            items, batches = _enrich_supplier_sources(items, batches, supplier_infos)
             shipment_items.extend(items)
             purchase_batches.extend(batches)
             for item in items:
                 if item.sku and item.sku not in sku_infos:
                     sku_infos[item.sku] = SkuInfo(sku=item.sku)
+        sku_infos.update(self.common_source._fetch_sku_infos(set(sku_infos)))
+        purchase_batches = self._enrich_purchase_batches(purchase_batches)
+        shipment_items = _enrich_items_from_batches(shipment_items, purchase_batches)
         return RawCustomsData(
             shipment_items=shipment_items,
             sku_infos=sku_infos,
@@ -123,22 +127,32 @@ class OverseasWarehouseApiDataSource:
         return center_codes
 
     def _fetch_supplier_infos(self) -> dict[str, dict[str, str]]:
-        if not self.supplier_list_endpoint:
-            return {}
-        try:
-            rows = self._fetch_offset_rows(self.supplier_list_endpoint)
-        except LingxingClientError:
-            return {}
-        infos: dict[str, dict[str, str]] = {}
-        for row in rows:
-            account_name = _select_supplier_account_name(
-                _first(row, {}, "account_name", "accountName", "account_names", "accountNames")
+        return self.common_source._fetch_supplier_infos()
+
+    def _enrich_purchase_batches(self, batches: list[PurchaseBatch]) -> list[PurchaseBatch]:
+        if not batches:
+            return []
+        purchase_orders = self.common_source._fetch_purchase_orders({batch.purchase_sn or batch.purchase_order_no for batch in batches})
+        supplier_infos = self._fetch_supplier_infos()
+        enriched: list[PurchaseBatch] = []
+        order_keys = ("purchase_sn", "purchase_order_no", "po_no", "order_sn", "custom_order_sn", "alibaba_order_sn")
+        for batch in batches:
+            purchase_sn = batch.purchase_sn or batch.purchase_order_no
+            purchase_order = purchase_orders.get(purchase_sn, {})
+            if not purchase_order and purchase_sn:
+                purchase_order = _first_matching_any(purchase_orders.values(), order_keys, purchase_sn) or {}
+            supplier_key = str(_first(purchase_order, {}, "supplier_name", "supplier", "supplierName") or batch.supplier)
+            supplier_info = supplier_infos.get(supplier_key, {})
+            enriched.append(
+                replace(
+                    batch,
+                    supplier=str(supplier_info.get("account_name") or supplier_key),
+                    domestic_source=str(supplier_info.get("url") or batch.domestic_source),
+                    purchase_order_no=str(_first(purchase_order, {}, "purchase_sn", "purchase_order_no", "po_no") or purchase_sn),
+                    purchase_sn=purchase_sn,
+                )
             )
-            source = _first(row, {}, "url", "supplier_url", "website")
-            supplier_info = {"account_name": account_name, "url": str(source or "")}
-            for name in _supplier_match_names(row, account_name):
-                infos[name] = supplier_info
-        return infos
+        return enriched
 
     def _fetch_offset_rows(self, endpoint: str) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -184,8 +198,8 @@ def _map_overseas_detail(
     for product in products:
         sku = str(_first(product, {}, "sku", "seller_sku", "local_sku") or "")
         product_box_info = _box_info_for_product(box_info, sku)
-        box_no = _box_no(product_box_info)
-        box_count = decimal_or_zero(_first(product_box_info, {}, "box_count", "boxCount", "box_num", "boxNum") or 1)
+        box_no = _format_box_no(_box_no(product_box_info))
+        box_count = ""
         total_gross_weight = _optional_decimal(
             _first(product_box_info, {}, "total_box_weight", "totalBoxWeight", "box_weight", "weight")
         )
@@ -201,7 +215,7 @@ def _map_overseas_detail(
             updated_at=updated_at,
             box_no=box_no,
             box_count=box_count,
-            logistics_provider=str(_first(detail, header, "logistics_name", "logisticsName") or ""),
+            logistics_provider=_logistics_provider(str(_first(detail, header, "logistics_name", "logisticsName") or "")),
             logistics_channel=str(_first(detail, header, "logistics_way_name", "logisticsWayName") or ""),
             transport_method=_overseas_transport_method(detail),
             logistics_center_code=awd_center_codes.get(awd_shipment_id, ""),
@@ -210,42 +224,42 @@ def _map_overseas_detail(
             outer_box_size=_outer_box_size(product_box_info),
             purchase_unit_price=_first_batch_price(product),
             supplier=_combined_batch_text(product, "supplier_names", "supplier_name", "supplier"),
+            source="overseas",
         )
         items.append(item)
         batches.extend(_map_overseas_purchase_batches(item, product))
     return items, batches
 
 
-def _enrich_supplier_sources(
-    items: list[ShipmentItem],
-    batches: list[PurchaseBatch],
-    supplier_infos: dict[str, dict[str, str]],
-) -> tuple[list[ShipmentItem], list[PurchaseBatch]]:
-    if not supplier_infos:
-        return items, batches
+def _enrich_items_from_batches(items: list[ShipmentItem], batches: list[PurchaseBatch]) -> list[ShipmentItem]:
+    batches_by_item: dict[tuple[str, str, str], list[PurchaseBatch]] = {}
+    for batch in batches:
+        batches_by_item.setdefault((batch.shipment_no, batch.sku, batch.box_no or ""), []).append(batch)
 
-    updated_items = []
+    enriched: list[ShipmentItem] = []
     for item in items:
-        supplier_info = supplier_infos.get(item.supplier, {})
-        updated_items.append(
+        item_batches = batches_by_item.get((item.shipment_no, item.sku, item.box_no or ""), [])
+        if not item_batches:
+            enriched.append(item)
+            continue
+        enriched.append(
             replace(
                 item,
-                supplier=str(supplier_info.get("account_name") or item.supplier),
-                domestic_source=str(supplier_info.get("url") or item.domestic_source),
+                supplier=_combined_nonempty(batch.supplier for batch in item_batches) or item.supplier,
+                domestic_source=_combined_nonempty(batch.domestic_source for batch in item_batches) or item.domestic_source,
+                purchase_unit_price=item_batches[0].purchase_unit_price or item.purchase_unit_price,
             )
         )
+    return enriched
 
-    updated_batches = []
-    for batch in batches:
-        supplier_info = supplier_infos.get(batch.supplier, {})
-        updated_batches.append(
-            replace(
-                batch,
-                supplier=str(supplier_info.get("account_name") or batch.supplier),
-                domestic_source=str(supplier_info.get("url") or batch.domestic_source),
-            )
-        )
-    return updated_items, updated_batches
+
+def _combined_nonempty(values) -> str:
+    distinct: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in distinct:
+            distinct.append(text)
+    return " / ".join(distinct)
 
 
 def _product_rows(detail: dict[str, Any]) -> list[dict[str, Any]]:
@@ -265,12 +279,38 @@ def _seller_name(product: dict[str, Any]) -> str:
 
 def _overseas_transport_method(detail: dict[str, Any]) -> str:
     logistics_info = detail.get("logisticsInfo") or detail.get("logistics_info") or {}
-    tracking = {}
+    tracking_rows = []
     if isinstance(logistics_info, dict):
-        tracking = logistics_info.get("head_logistics_tracking_info") or logistics_info.get("headLogisticsTrackingInfo") or {}
-    if isinstance(tracking, dict):
-        return str(tracking.get("transport_type_name") or tracking.get("transportTypeName") or "")
+        tracking_rows = _as_list(logistics_info.get("head_logistics_tracking_info") or logistics_info.get("headLogisticsTrackingInfo"))
+    for tracking in tracking_rows:
+        if not isinstance(tracking, dict):
+            continue
+        normalized = _normalize_transport(str(tracking.get("transport_type_name") or tracking.get("transportTypeName") or ""))
+        if normalized:
+            return normalized
     return ""
+
+
+def _normalize_transport(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lower_text = text.lower()
+    if "\u6d77" in text or "sea" in lower_text or "ocean" in lower_text:
+        return "\u6d77\u8fd0"
+    if "\u9646" in text or "land" in lower_text or "truck" in lower_text:
+        return "\u9646\u8fd0"
+    if "\u7a7a" in text or "air" in lower_text:
+        return "\u7a7a\u8fd0"
+    return text
+
+
+def _logistics_provider(value: str) -> str:
+    text = str(value or "").strip()
+    match = re.search(r"[（(]([^()（）]+)[）)]", text)
+    if match:
+        return match.group(1).strip()
+    return text
 
 
 def _total_package_num(detail: dict[str, Any]) -> Any:
@@ -286,19 +326,25 @@ def _map_overseas_purchase_batches(item: ShipmentItem, product: dict[str, Any]) 
     for row in rows:
         if not isinstance(row, dict):
             continue
+        purchase_sns = _batch_purchase_sns(row)
         supplier = _combined_batch_text({"batch_record_list": [row]}, "supplier_names", "supplier_name", "supplier")
         price = _optional_decimal(_first(row, {}, "unit_storage_cost", "unitStorageCost", "unit_purchase_price", "purchase_unit_price"))
         quantity = decimal_or_zero(_first(row, {}, "outbound_num", "quantity", "qty", "num") or item.quantity)
-        batches.append(
-            PurchaseBatch(
-                shipment_no=item.shipment_no,
-                sku=item.sku,
-                box_no=item.box_no,
-                quantity=quantity,
-                supplier=supplier,
-                purchase_unit_price=price or item.purchase_unit_price,
+        if not purchase_sns:
+            purchase_sns = [""]
+        for index, purchase_sn in enumerate(purchase_sns):
+            batches.append(
+                PurchaseBatch(
+                    shipment_no=item.shipment_no,
+                    sku=item.sku,
+                    box_no=item.box_no,
+                    quantity=quantity if len(purchase_sns) == 1 else quantity / Decimal(len(purchase_sns)),
+                    supplier=supplier,
+                    purchase_order_no=str(purchase_sn),
+                    purchase_sn=str(purchase_sn),
+                    purchase_unit_price=price or item.purchase_unit_price,
+                )
             )
-        )
     if not batches and item.supplier:
         batches.append(
             PurchaseBatch(
@@ -311,6 +357,22 @@ def _map_overseas_purchase_batches(item: ShipmentItem, product: dict[str, Any]) 
             )
         )
     return batches
+
+
+def _batch_purchase_sns(row: dict[str, Any]) -> list[str]:
+    values = _as_list(
+        row.get("purchase_order_sns")
+        or row.get("custom_purchase_order_sns")
+        or row.get("purchase_sns")
+        or row.get("purchaseSn")
+        or row.get("purchase_sn")
+    )
+    distinct: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in distinct:
+            distinct.append(text)
+    return distinct
 
 
 def _first_batch_price(product: dict[str, Any]) -> Decimal | None:
@@ -459,7 +521,10 @@ def _packing_request_bodies(header: dict[str, Any], detail: dict[str, Any]) -> l
 
 def _awd_request_bodies(awd_id: str) -> list[dict[str, Any]]:
     bodies = []
-    for key in ("shipmentId", "shipment_id", "awd_shipment_id", "awdShipmentId", "id"):
+    for key in ("shipmentId", "shipment_id", "awd_shipment_id", "awdShipmentId", "id", "shipment_id_list", "shipmentIdList"):
+        if key in ("shipment_id_list", "shipmentIdList"):
+            bodies.append({key: [awd_id]})
+            continue
         bodies.append({key: awd_id})
     return bodies
 

@@ -21,7 +21,7 @@ class ShipmentItem:
     product_name: str = ""
     updated_at: str = ""
     box_no: str = ""
-    box_count: Decimal = Decimal("1")
+    box_count: Decimal | str = Decimal("1")
     pieces: Decimal = Decimal("1")
     logistics_provider: str = ""
     logistics_channel: str = ""
@@ -34,6 +34,7 @@ class ShipmentItem:
     purchase_entity: str = ""
     supplier: str = ""
     domestic_source: str = ""
+    source: str = "amazon"
 
 
 @dataclass(frozen=True)
@@ -104,11 +105,12 @@ class CustomsRow:
     logistics_center_code: str
     package_type: str
     box_no: str
-    box_count: Decimal
+    box_count: Decimal | str
     total_gross_weight: Decimal | str
     total_net_weight: Decimal | str
     outer_box_size: str
     volume: Decimal | str
+    source: str = ""
 
 
 @dataclass(frozen=True)
