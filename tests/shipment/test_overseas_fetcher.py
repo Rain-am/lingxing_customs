@@ -56,6 +56,14 @@ class OverseasClient:
                         {
                             "overseas_order_no": "OW260703001",
                             "update_time": 1783094400000,
+                            "head_logistics_list": [
+                                {
+                                    "tracking_list": [
+                                        {"transport_type": 1},
+                                        {"transport_type": 2},
+                                    ]
+                                }
+                            ],
                             "products": [
                                 {
                                     "sku": "SKU-OW-1",

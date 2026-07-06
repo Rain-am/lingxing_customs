@@ -219,7 +219,11 @@ def _map_overseas_detail(
             box_count=box_count,
             logistics_provider=_logistics_provider(str(_first(detail, header, "logistics_name", "logisticsName") or "")),
             logistics_channel=str(_first(detail, header, "logistics_way_name", "logisticsWayName") or ""),
-            transport_method=_overseas_transport_method(detail, str(_first(detail, header, "logistics_way_name", "logisticsWayName") or "")),
+            transport_method=_overseas_transport_method(
+                header,
+                detail,
+                str(_first(detail, header, "logistics_way_name", "logisticsWayName") or ""),
+            ),
             logistics_center_code=awd_center_codes.get(awd_shipment_id, "") or _product_center_code(product, detail, header),
             volume=total_box_volume,
             total_gross_weight=total_gross_weight,
@@ -300,7 +304,10 @@ def _seller_name(product: dict[str, Any]) -> str:
     return str(_first(product, {}, "seller_name", "sellerName", "sname") or "")
 
 
-def _overseas_transport_method(detail: dict[str, Any], logistics_channel: str = "") -> str:
+def _overseas_transport_method(header: dict[str, Any], detail: dict[str, Any], logistics_channel: str = "") -> str:
+    header_transport = _transport_method_from_header(header)
+    if header_transport:
+        return header_transport
     logistics_info = detail.get("logisticsInfo") or detail.get("logistics_info") or {}
     tracking_rows = []
     if isinstance(logistics_info, dict):
@@ -322,6 +329,43 @@ def _overseas_transport_method(detail: dict[str, Any], logistics_channel: str = 
         return candidates[0]
     if channel_transport:
         return channel_transport
+    return ""
+
+
+def _transport_method_from_header(header: dict[str, Any]) -> str:
+    logistics_rows = _as_list(header.get("head_logistics_list") or header.get("headLogisticsList"))
+    candidates: list[str] = []
+    for logistics in logistics_rows:
+        if not isinstance(logistics, dict):
+            continue
+        tracking_rows = _as_list(
+            logistics.get("tracking_list")
+            or logistics.get("trackingList")
+            or logistics.get("track_list")
+            or logistics.get("trackList")
+        )
+        for tracking in tracking_rows:
+            if not isinstance(tracking, dict):
+                continue
+            transport = _transport_type_value_name(tracking.get("transport_type") or tracking.get("transportType"))
+            if transport:
+                candidates.append(transport)
+    for candidate in candidates:
+        if candidate == "\u6d77\u8fd0":
+            return candidate
+    return candidates[0] if candidates else ""
+
+
+def _transport_type_value_name(value: Any) -> str:
+    text = str(value or "").strip()
+    if text == "1":
+        return "\u5feb\u9012"
+    if text == "2":
+        return "\u6d77\u8fd0"
+    if text == "3":
+        return "\u7a7a\u8fd0"
+    if text == "4":
+        return "\u5176\u4ed6"
     return ""
 
 
