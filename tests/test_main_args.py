@@ -133,6 +133,18 @@ class MainArgsTest(unittest.TestCase):
         self.assertTrue(args.write_db)
         self.assertIsNone(args.output)
 
+    def test_shipment_source_overseas_arg(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--job", "shipment", "--shipment-source", "overseas", "--write-db"]):
+            args = main.parse_args()
+
+        self.assertEqual(args.shipment_source, "overseas")
+
+    def test_shipment_source_all_arg(self) -> None:
+        with patch.object(sys, "argv", ["main.py", "--job", "shipment", "--shipment-source", "all", "--write-db"]):
+            args = main.parse_args()
+
+        self.assertEqual(args.shipment_source, "all")
+
     def test_db_preflight_allows_recent_window_without_explicit_shipment_time(self) -> None:
         with patch.object(sys, "argv", ["main.py", "--db-preflight"]):
             args = main.parse_args()

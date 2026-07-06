@@ -12,6 +12,7 @@ from src.shipment.export_excel import export_customs_workbook
 from src.shipment.export_mysql import export_customs_rows_to_mysql, preflight_customs_rows_mysql
 from src.shipment.fetcher import LingxingApiDataSource
 from src.shipment.models import RawCustomsData
+from src.shipment.overseas_fetcher import OverseasWarehouseApiDataSource
 from src.shipment.product_master import apply_product_master_data
 from src.shipment.sample_data import SampleDataSource
 from src.shipment.seller_department import apply_seller_department_mapping
@@ -21,9 +22,9 @@ def run_shipment_job(args: Any) -> None:
     if args.clear_cache:
         JsonCache().clear()
         print("Lingxing master-data cache cleared.")
-    data_source = SampleDataSource() if args.use_sample_data else LingxingApiDataSource(refresh_cache=args.refresh_cache)
+    data_sources = _shipment_data_sources(args)
     shipment_times = _shipment_times(args)
-    raw_data = _load_raw_data_for_dates(data_source, shipment_times)
+    raw_data = _load_raw_data_for_dates(data_sources, shipment_times)
     _apply_product_master_data(raw_data)
     _apply_seller_department_mapping(raw_data)
     workbook_data = build_customs_workbook_data(raw_data)
@@ -47,6 +48,7 @@ def run_shipment_job(args: Any) -> None:
     else:
         print("Generated customs workbook: skipped (--output not provided)")
     print("Shipment dates: " + ", ".join(shipment_times))
+    print("Shipment sources: " + ", ".join(_shipment_source_names(args)))
     print(f"Customs rows: {len(workbook_data.customs_rows)}")
     print(f"Issue rows: {len(workbook_data.issue_rows)}")
     print(f"Purchase split rows: {len(workbook_data.purchase_split_rows)}")
@@ -71,14 +73,36 @@ def _today() -> date:
     return date.today()
 
 
-def _load_raw_data_for_dates(data_source: Any, shipment_times: list[str]) -> RawCustomsData:
+def _shipment_data_sources(args: Any) -> list[Any]:
+    if args.use_sample_data:
+        return [SampleDataSource()]
+    if args.shipment_source == "overseas":
+        return [OverseasWarehouseApiDataSource(refresh_cache=args.refresh_cache)]
+    if args.shipment_source == "all":
+        return [
+            LingxingApiDataSource(refresh_cache=args.refresh_cache),
+            OverseasWarehouseApiDataSource(refresh_cache=args.refresh_cache),
+        ]
+    return [LingxingApiDataSource(refresh_cache=args.refresh_cache)]
+
+
+def _shipment_source_names(args: Any) -> list[str]:
+    if args.use_sample_data:
+        return ["sample"]
+    if args.shipment_source == "all":
+        return ["amazon", "overseas"]
+    return [args.shipment_source]
+
+
+def _load_raw_data_for_dates(data_sources: list[Any], shipment_times: list[str]) -> RawCustomsData:
     combined = RawCustomsData()
-    for shipment_time in shipment_times:
-        raw_data = data_source.load(shipment_time=shipment_time)
-        combined.shipment_items.extend(raw_data.shipment_items)
-        combined.purchase_batches.extend(raw_data.purchase_batches)
-        combined.sku_infos.update(raw_data.sku_infos)
-        combined.metadata.update(raw_data.metadata)
+    for data_source in data_sources:
+        for shipment_time in shipment_times:
+            raw_data = data_source.load(shipment_time=shipment_time)
+            combined.shipment_items.extend(raw_data.shipment_items)
+            combined.purchase_batches.extend(raw_data.purchase_batches)
+            combined.sku_infos.update(raw_data.sku_infos)
+            combined.metadata.update(raw_data.metadata)
     return combined
 
 

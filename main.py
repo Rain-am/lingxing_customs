@@ -28,6 +28,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Shipment date. Omit it to run yesterday and today for shipment jobs.",
     )
+    parser.add_argument(
+        "--shipment-source",
+        choices=("amazon", "overseas", "all"),
+        default="amazon",
+        help="Shipment data source. amazon keeps the existing FBA logic; overseas uses overseas warehouse stocking orders.",
+    )
     parser.add_argument("--output", help="Output .xlsx path.")
     parser.add_argument(
         "--use-sample-data",
