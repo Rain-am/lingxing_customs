@@ -5,7 +5,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SHIPMENT_LOG="$PROJECT_DIR/logs/shipment-cron.log"
 PRODUCT_LOG="$PROJECT_DIR/logs/product-cron.log"
 
-SHIPMENT_CMD="cd $PROJECT_DIR && /usr/bin/flock -n /tmp/lingxing-shipment.lock .venv/bin/python main.py --job shipment --write-db --debug-api >> $SHIPMENT_LOG 2>&1"
+SHIPMENT_CMD="cd $PROJECT_DIR && /usr/bin/flock -n /tmp/lingxing-shipment.lock .venv/bin/python main.py --job shipment --shipment-source all --write-db --debug-api >> $SHIPMENT_LOG 2>&1"
 PRODUCT_CMD="cd $PROJECT_DIR && /usr/bin/flock -n /tmp/lingxing-product.lock .venv/bin/python main.py --job product --write-db --debug-api >> $PRODUCT_LOG 2>&1"
 
 SHIPMENT_CRON_LINE="*/5 7-22 * * * $SHIPMENT_CMD"

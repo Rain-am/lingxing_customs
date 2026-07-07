@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import unittest
+from threading import Barrier
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from src.shipment.job import _shipment_times, run_shipment_job
+from src.shipment.job import _load_raw_data_for_dates, _shipment_times, run_shipment_job
 from src.shipment.models import RawCustomsData
 
 
@@ -73,10 +74,58 @@ class ShipmentJobTest(unittest.TestCase):
         build_rows.assert_called_once()
         export_excel.assert_not_called()
 
+    def test_all_sources_load_in_parallel_for_each_date(self) -> None:
+        barrier = Barrier(2)
+        sources = [BarrierShipmentDataSource("amazon", barrier), BarrierShipmentDataSource("overseas", barrier)]
+
+        raw = _load_raw_data_for_dates(sources, ["2026-07-02"])
+
+        self.assertEqual(raw.metadata["amazon"], "2026-07-02")
+        self.assertEqual(raw.metadata["overseas"], "2026-07-02")
+
+    def test_all_source_failure_does_not_build_or_write_rows(self) -> None:
+        args = SimpleNamespace(
+            clear_cache=False,
+            use_sample_data=False,
+            refresh_cache=False,
+            shipment_source="all",
+            shipment_time="2026-07-02",
+            shipment_time_provided=True,
+            output=None,
+            db_preflight=False,
+            write_db=True,
+        )
+
+        with (
+            patch("src.shipment.job._shipment_data_sources", return_value=[FakeShipmentDataSource(), FailingShipmentDataSource()]),
+            patch("src.shipment.job.build_customs_workbook_data") as build_rows,
+            patch("src.shipment.job.export_customs_rows_to_mysql") as export_mysql,
+        ):
+            with self.assertRaises(RuntimeError):
+                run_shipment_job(args)
+
+        build_rows.assert_not_called()
+        export_mysql.assert_not_called()
+
 
 class FakeShipmentDataSource:
     def load(self, shipment_time):
         return RawCustomsData()
+
+
+class FailingShipmentDataSource:
+    def load(self, shipment_time):
+        raise RuntimeError("source failed")
+
+
+class BarrierShipmentDataSource:
+    def __init__(self, name: str, barrier: Barrier) -> None:
+        self.name = name
+        self.barrier = barrier
+
+    def load(self, shipment_time):
+        self.barrier.wait(timeout=1)
+        return RawCustomsData(metadata={self.name: shipment_time})
 
 if __name__ == "__main__":
     unittest.main()

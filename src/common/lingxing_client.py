@@ -6,6 +6,7 @@ import json
 import os
 import re
 import time
+import threading
 from http.client import IncompleteRead
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ class LingxingClientError(RuntimeError):
 
 
 RETRYABLE_ERRORS = (HTTPError, URLError, TimeoutError, ConnectionError, IncompleteRead, ValueError, LingxingClientError)
+_DEBUG_WRITE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -261,30 +263,31 @@ class LingxingClient:
         path = Path(debug_dir)
         path.mkdir(parents=True, exist_ok=True)
         summary_path = path / "performance_summary.json"
-        try:
-            summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}
-        except (OSError, json.JSONDecodeError):
-            summary = {}
-        key = endpoint
-        item = summary.setdefault(
-            key,
-            {
-                "count": 0,
-                "total_seconds": 0.0,
-                "max_seconds": 0.0,
-                "row_count": 0,
-                "error_count": 0,
-                "last_error": "",
-            },
-        )
-        item["count"] += 1
-        item["total_seconds"] = round(float(item["total_seconds"]) + elapsed_seconds, 6)
-        item["max_seconds"] = round(max(float(item["max_seconds"]), elapsed_seconds), 6)
-        item["row_count"] += row_count
-        if error:
-            item["error_count"] += 1
-            item["last_error"] = error[:500]
-        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        with _DEBUG_WRITE_LOCK:
+            try:
+                summary = json.loads(summary_path.read_text(encoding="utf-8")) if summary_path.exists() else {}
+            except (OSError, json.JSONDecodeError):
+                summary = {}
+            key = endpoint
+            item = summary.setdefault(
+                key,
+                {
+                    "count": 0,
+                    "total_seconds": 0.0,
+                    "max_seconds": 0.0,
+                    "row_count": 0,
+                    "error_count": 0,
+                    "last_error": "",
+                },
+            )
+            item["count"] += 1
+            item["total_seconds"] = round(float(item["total_seconds"]) + elapsed_seconds, 6)
+            item["max_seconds"] = round(max(float(item["max_seconds"]), elapsed_seconds), 6)
+            item["row_count"] += row_count
+            if error:
+                item["error_count"] += 1
+                item["last_error"] = error[:500]
+            summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _extract_list(data: dict[str, Any], list_key: str) -> list[dict[str, Any]]:

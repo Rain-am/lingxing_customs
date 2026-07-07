@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -99,14 +101,45 @@ def _shipment_source_names(args: Any) -> list[str]:
 
 def _load_raw_data_for_dates(data_sources: list[Any], shipment_times: list[str]) -> RawCustomsData:
     combined = RawCustomsData()
-    for data_source in data_sources:
-        for shipment_time in shipment_times:
-            raw_data = data_source.load(shipment_time=shipment_time)
+    for shipment_time in shipment_times:
+        if len(data_sources) > 1:
+            raw_data_list = _load_raw_data_for_date_parallel(data_sources, shipment_time)
+        else:
+            raw_data_list = [data_sources[0].load(shipment_time=shipment_time)]
+        for raw_data in raw_data_list:
             combined.shipment_items.extend(raw_data.shipment_items)
             combined.purchase_batches.extend(raw_data.purchase_batches)
             combined.sku_infos.update(raw_data.sku_infos)
             combined.metadata.update(raw_data.metadata)
     return combined
+
+
+def _load_raw_data_for_date_parallel(data_sources: list[Any], shipment_time: str) -> list[RawCustomsData]:
+    results: list[RawCustomsData | None] = [None] * len(data_sources)
+    with ThreadPoolExecutor(max_workers=len(data_sources)) as executor:
+        futures = {}
+        for index, data_source in enumerate(data_sources):
+            source_name = _data_source_name(data_source)
+            print(f"Shipment source {source_name} started for {shipment_time}")
+            started_at = time.perf_counter()
+            future = executor.submit(data_source.load, shipment_time=shipment_time)
+            futures[future] = (index, source_name, started_at)
+
+        for future in as_completed(futures):
+            index, source_name, started_at = futures[future]
+            results[index] = future.result()
+            print(f"Shipment source {source_name} finished for {shipment_time}: {time.perf_counter() - started_at:.2f}s")
+    return [result for result in results if result is not None]
+
+
+def _data_source_name(data_source: Any) -> str:
+    if isinstance(data_source, OverseasWarehouseApiDataSource):
+        return "overseas"
+    if isinstance(data_source, LingxingApiDataSource):
+        return "amazon"
+    if isinstance(data_source, SampleDataSource):
+        return "sample"
+    return data_source.__class__.__name__
 
 
 def _apply_product_master_data(raw_data: RawCustomsData) -> None:
