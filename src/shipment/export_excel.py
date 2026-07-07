@@ -10,6 +10,7 @@ from src.shipment.models import CustomsWorkbookData
 CUSTOMS_HEADERS = [
     ("id", "id"),
     ("shipment_date", "确定出运月份"),
+    ("shipment_day", "确定出运日期"),
     ("shipment_no", "发货单号"),
     ("seller_name", "店铺"),
     ("purchase_entity", "采购主体"),

@@ -60,13 +60,14 @@ class OverseasClient:
                                 {
                                     "tracking_list": [
                                         {"transport_type": 1},
-                                        {"transport_type": 2},
+                                        {"order_type_code": 3, "tracking_number": "BOX-35\nBOX-36"},
                                     ]
                                 }
                             ],
                             "products": [
                                 {
                                     "sku": "SKU-OW-1",
+                                    "stock_num": 24,
                                     "batch_record_list": [
                                         {
                                             "purchase_order_sns": ["PO260701001"],
@@ -94,7 +95,7 @@ class OverseasClient:
                             {"transport_type_name": "海运"},
                         ],
                     },
-                    "total": {"package_num": 24},
+                    "total": {"package_num": 2880, "stock_num": 99},
                     "products": [
                         {
                             "sku": "SKU-OW-1",
@@ -137,8 +138,8 @@ class OverseasClient:
                                     "total_box_volume": "0.123456",
                                 },
                                 "box_list": [
-                                    {"box_no": "BOX-35", "length": "10", "width": "20", "height": "30"},
-                                    {"box_no": "BOX-36", "length": "10", "width": "20", "height": "30"},
+                                    {"box_no": "BOX-35", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
+                                    {"box_no": "BOX-36", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
                                 ],
                             }
                         ]
@@ -226,8 +227,8 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
                                 "total_box_volume": "0.123456",
                             },
                             "box_list": [
-                                {"box_no": "BOX-35", "length": "10", "width": "20", "height": "30"},
-                                {"box_no": "BOX-36", "length": "10", "width": "20", "height": "30"},
+                                {"box_no": "BOX-35", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
+                                {"box_no": "BOX-36", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
                             ],
                         }
                     )
@@ -241,6 +242,18 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertTrue(all(row.total_gross_weight == Decimal("11.50") for row in workbook.customs_rows))
         self.assertTrue(all(row.outer_box_size == "10*20*30" for row in workbook.customs_rows))
         self.assertTrue(all(row.volume == Decimal("0.123456") for row in workbook.customs_rows))
+
+    def test_box_no_falls_back_to_tracking_order_type_when_packing_is_not_sku_matched(self) -> None:
+        class GenericPackingClient(OverseasClient):
+            def post(self, endpoint, payload):
+                data = super().post(endpoint, payload)
+                if endpoint.endswith("/owms/inbound/getPackingData"):
+                    data["data"]["box_data"]["box_content"] = data["data"]["box_data"]["box_content"][:1]
+                return data
+
+        raw = OverseasWarehouseApiDataSource(client=GenericPackingClient()).load("2026-07-03")
+
+        self.assertEqual(raw.shipment_items[0].box_no, "35-36")
 
 
 if __name__ == "__main__":

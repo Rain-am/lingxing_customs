@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 from datetime import datetime
 from decimal import Decimal
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from src.common.lingxing_client import LingxingClient, LingxingClientError
@@ -43,6 +45,7 @@ class OverseasWarehouseApiDataSource:
         shipment_items: list[ShipmentItem] = []
         purchase_batches: list[PurchaseBatch] = []
         sku_infos: dict[str, SkuInfo] = {}
+        field_debug_rows: list[dict[str, Any]] = []
 
         for header in headers:
             detail = self._fetch_detail(header)
@@ -51,9 +54,10 @@ class OverseasWarehouseApiDataSource:
                 continue
             packing_data = self._fetch_packing_data(header, detail_data)
             awd_center_codes = self._fetch_awd_center_codes(detail_data)
-            items, batches = _map_overseas_detail(header, detail_data, packing_data, awd_center_codes)
+            items, batches, debug_rows = _map_overseas_detail(header, detail_data, packing_data, awd_center_codes)
             shipment_items.extend(items)
             purchase_batches.extend(batches)
+            field_debug_rows.extend(debug_rows)
             for item in items:
                 if item.sku and item.sku not in sku_infos:
                     sku_infos[item.sku] = SkuInfo(sku=item.sku)
@@ -64,7 +68,7 @@ class OverseasWarehouseApiDataSource:
             shipment_items=shipment_items,
             sku_infos=sku_infos,
             purchase_batches=purchase_batches,
-            metadata={"shipment_source": "overseas"},
+            metadata={"shipment_source": "overseas", "overseas_field_debug_rows": field_debug_rows},
         )
 
     def _fetch_headers(self, shipment_time: str | None) -> list[dict[str, Any]]:
@@ -186,7 +190,7 @@ def _map_overseas_detail(
     detail: dict[str, Any],
     packing_data: dict[str, Any],
     awd_center_codes: dict[str, str],
-) -> tuple[list[ShipmentItem], list[PurchaseBatch]]:
+) -> tuple[list[ShipmentItem], list[PurchaseBatch], list[dict[str, Any]]]:
     products = _product_rows(detail) or _product_rows(header)
     header_products = _products_by_sku(header)
     box_info = _packing_box_info(packing_data)
@@ -195,23 +199,28 @@ def _map_overseas_detail(
     updated_at = _date_time_text(_first(header, detail, "update_time", "updated_at"))
     items: list[ShipmentItem] = []
     batches: list[PurchaseBatch] = []
+    debug_rows: list[dict[str, Any]] = []
 
     for product in products:
         sku = str(_first(product, {}, "sku", "seller_sku", "local_sku") or "")
         product = _merge_product(product, header_products.get(sku, {}))
-        product_box_info = _box_info_for_product(box_info, sku)
-        box_no = _format_box_no(_box_no(product_box_info))
+        product_box_info, box_info_matched = _box_info_for_product(box_info, sku)
+        box_no, box_no_source = _box_no_with_source(product_box_info, header, box_info_matched)
         box_count = ""
-        total_gross_weight = _optional_decimal(
-            _first(product_box_info, {}, "total_box_weight", "totalBoxWeight", "box_weight", "weight")
-        )
+        total_gross_weight, gross_weight_source = _box_gross_weight_with_source(product_box_info)
         total_box_volume = _optional_decimal(_first(product_box_info, {}, "total_box_volume", "totalBoxVolume", "volume", "cbm"))
         awd_shipment_id = str(_first(product, {}, "awd_shipment_id", "awdShipmentId", "shipmentId") or "")
+        quantity, quantity_source = _product_quantity(product, detail)
+        transport_method, transport_source = _overseas_transport_method_with_source(
+            header,
+            detail,
+            str(_first(detail, header, "logistics_way_name", "logisticsWayName") or ""),
+        )
         item = ShipmentItem(
             shipment_date=shipment_date,
             shipment_no=shipment_no,
             sku=sku,
-            quantity=decimal_or_zero(_total_package_num(detail) or _first(product, {}, "package_num", "quantity", "qty", "num")),
+            quantity=quantity,
             seller_name=_seller_name(product),
             product_name=str(_first(product, {}, "product_name", "productName", "name") or ""),
             updated_at=updated_at,
@@ -219,11 +228,7 @@ def _map_overseas_detail(
             box_count=box_count,
             logistics_provider=_logistics_provider(str(_first(detail, header, "logistics_name", "logisticsName") or "")),
             logistics_channel=str(_first(detail, header, "logistics_way_name", "logisticsWayName") or ""),
-            transport_method=_overseas_transport_method(
-                header,
-                detail,
-                str(_first(detail, header, "logistics_way_name", "logisticsWayName") or ""),
-            ),
+            transport_method=transport_method,
             logistics_center_code=awd_center_codes.get(awd_shipment_id, "") or _product_center_code(product, detail, header),
             volume=total_box_volume,
             total_gross_weight=total_gross_weight,
@@ -234,7 +239,21 @@ def _map_overseas_detail(
         )
         items.append(item)
         batches.extend(_map_overseas_purchase_batches(item, product))
-    return items, batches
+        debug_rows.append(
+            {
+                "shipment_no": shipment_no,
+                "sku": sku,
+                "quantity": str(quantity),
+                "quantity_source": quantity_source,
+                "box_no": box_no,
+                "box_no_source": box_no_source,
+                "gross_weight": str(total_gross_weight or ""),
+                "gross_weight_source": gross_weight_source,
+                "transport_method": transport_method,
+                "transport_method_source": transport_source,
+            }
+        )
+    return items, batches, debug_rows
 
 
 def _enrich_items_from_batches(items: list[ShipmentItem], batches: list[PurchaseBatch]) -> list[ShipmentItem]:
@@ -304,10 +323,32 @@ def _seller_name(product: dict[str, Any]) -> str:
     return str(_first(product, {}, "seller_name", "sellerName", "sname") or "")
 
 
-def _overseas_transport_method(header: dict[str, Any], detail: dict[str, Any], logistics_channel: str = "") -> str:
+def _product_quantity(product: dict[str, Any], detail: dict[str, Any]) -> tuple[Decimal, str]:
+    product_value = _first(product, {}, "stock_num", "stockNum", "package_num", "packageNum", "quantity", "qty", "num")
+    if product_value not in (None, ""):
+        return decimal_or_zero(product_value), "products.stock_num/package_num/quantity"
+    total = detail.get("total")
+    if isinstance(total, dict):
+        total_stock_num = _first(total, {}, "stock_num", "stockNum")
+        if total_stock_num not in (None, ""):
+            return decimal_or_zero(total_stock_num), "total.stock_num"
+    return Decimal("0"), "missing"
+
+
+def _overseas_transport_method_with_source(header: dict[str, Any], detail: dict[str, Any], logistics_channel: str = "") -> tuple[str, str]:
+    detail_transport = _transport_method_from_detail(detail)
+    if detail_transport:
+        return detail_transport, "detail.logisticsInfo.head_logistics_tracking_info.transport_type_name"
     header_transport = _transport_method_from_header(header)
     if header_transport:
-        return header_transport
+        return header_transport, "listInbound.head_logistics_list.tracking_list.transport_type"
+    channel_transport = _normalize_transport(logistics_channel)
+    if channel_transport:
+        return channel_transport, "logistics_way_name"
+    return "", "missing"
+
+
+def _transport_method_from_detail(detail: dict[str, Any]) -> str:
     logistics_info = detail.get("logisticsInfo") or detail.get("logistics_info") or {}
     tracking_rows = []
     if isinstance(logistics_info, dict):
@@ -322,13 +363,8 @@ def _overseas_transport_method(header: dict[str, Any], detail: dict[str, Any], l
     for candidate in candidates:
         if candidate == "\u6d77\u8fd0":
             return candidate
-    channel_transport = _normalize_transport(logistics_channel)
-    if channel_transport == "\u6d77\u8fd0":
-        return channel_transport
     if candidates:
         return candidates[0]
-    if channel_transport:
-        return channel_transport
     return ""
 
 
@@ -512,11 +548,11 @@ def _packing_box_info(packing_data: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _box_info_for_product(box_infos: list[dict[str, Any]], sku: str) -> dict[str, Any]:
+def _box_info_for_product(box_infos: list[dict[str, Any]], sku: str) -> tuple[dict[str, Any], bool]:
     for box_info in box_infos:
         if _box_info_contains_sku(box_info, sku):
-            return box_info
-    return box_infos[0] if box_infos else {}
+            return box_info, True
+    return (box_infos[0], False) if box_infos else ({}, False)
 
 
 def _box_info_contains_sku(box_info: dict[str, Any], sku: str) -> bool:
@@ -550,6 +586,71 @@ def _box_no(box_info: dict[str, Any]) -> str:
     if values:
         return "\n".join(values)
     return str(_first(box_info, {}, "box_no", "boxNo", "carton_no", "case_no") or "")
+
+
+def _box_no_with_source(box_info: dict[str, Any], header: dict[str, Any], box_info_matched: bool) -> tuple[str, str]:
+    packing_box_no = _format_box_no(_box_no(box_info))
+    if packing_box_no and box_info_matched:
+        return packing_box_no, "packing.box_list.box_no"
+    header_box_no = _box_no_from_header_tracking(header)
+    if header_box_no:
+        return header_box_no, "listInbound.head_logistics_list.tracking_list.order_type_code=3"
+    if packing_box_no:
+        return packing_box_no, "packing.box_list.box_no_unmatched"
+    return "", "missing"
+
+
+def _box_no_from_header_tracking(header: dict[str, Any]) -> str:
+    values: list[str] = []
+    for logistics in _as_list(header.get("head_logistics_list") or header.get("headLogisticsList")):
+        if not isinstance(logistics, dict):
+            continue
+        tracking_rows = _as_list(
+            logistics.get("tracking_list")
+            or logistics.get("trackingList")
+            or logistics.get("track_list")
+            or logistics.get("trackList")
+        )
+        for tracking in tracking_rows:
+            if not isinstance(tracking, dict):
+                continue
+            if str(tracking.get("order_type_code") or tracking.get("orderTypeCode") or "").strip() != "3":
+                continue
+            value = _first(
+                tracking,
+                {},
+                "box_no",
+                "boxNo",
+                "carton_no",
+                "cartonNo",
+                "case_no",
+                "caseNo",
+                "tracking_number",
+                "trackingNumber",
+                "order_no",
+                "orderNo",
+                "number",
+                "no",
+            )
+            if value not in (None, ""):
+                values.extend(str(part) for part in _as_list(value))
+    return _format_box_no("\n".join(values)) if values else ""
+
+
+def _box_gross_weight_with_source(box_info: dict[str, Any]) -> tuple[Decimal | None, str]:
+    weights: list[Decimal] = []
+    for box in _as_list(box_info.get("box_list") or box_info.get("boxList")):
+        if not isinstance(box, dict):
+            continue
+        weight = _optional_decimal(_first(box, {}, "weight", "box_weight", "boxWeight", "total_box_weight", "totalBoxWeight"))
+        if weight is not None:
+            weights.append(weight)
+    if weights:
+        return sum(weights, Decimal("0")), "packing.box_list.weight"
+    fallback = _optional_decimal(_first(box_info, {}, "total_box_weight", "totalBoxWeight", "box_weight", "boxWeight", "weight"))
+    if fallback is not None:
+        return fallback, "packing.boxInfo.total_box_weight/weight"
+    return None, "missing"
 
 
 def _outer_box_size(box_info: dict[str, Any]) -> str:
@@ -647,6 +748,32 @@ def _date_time_text(value: Any) -> str:
         return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
     except (OSError, OverflowError, ValueError):
         return text
+
+
+def write_overseas_field_debug(raw_data: RawCustomsData) -> None:
+    debug_dir = os.getenv("LINGXING_DEBUG_DIR", "")
+    if not debug_dir:
+        return
+    rows = raw_data.metadata.get("overseas_field_debug_rows")
+    if not isinstance(rows, list) or not rows:
+        return
+    enriched_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        sku = str(row.get("sku") or "")
+        sku_info = raw_data.sku_infos.get(sku)
+        customs_name_cn = sku_info.customs_name_cn if sku_info else ""
+        enriched = dict(row)
+        enriched["customs_name_cn"] = customs_name_cn
+        enriched["customs_name_cn_source"] = "customs_product/productInfo" if customs_name_cn else "missing"
+        enriched_rows.append(enriched)
+    path = Path(debug_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "overseas_field_sources.json").write_text(
+        json.dumps(enriched_rows, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _client_page_size(client: Any) -> int:

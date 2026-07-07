@@ -12,7 +12,7 @@ from src.shipment.export_excel import export_customs_workbook
 from src.shipment.export_mysql import export_customs_rows_to_mysql, preflight_customs_rows_mysql
 from src.shipment.fetcher import LingxingApiDataSource
 from src.shipment.models import RawCustomsData
-from src.shipment.overseas_fetcher import OverseasWarehouseApiDataSource
+from src.shipment.overseas_fetcher import OverseasWarehouseApiDataSource, write_overseas_field_debug
 from src.shipment.product_master import apply_product_master_data
 from src.shipment.sample_data import SampleDataSource
 from src.shipment.seller_department import apply_seller_department_mapping
@@ -29,6 +29,7 @@ def run_shipment_job(args: Any) -> None:
     _apply_product_master_data(raw_data)
     _apply_seller_department_mapping(raw_data)
     _apply_warehouse_region_mapping(raw_data)
+    write_overseas_field_debug(raw_data)
     workbook_data = build_customs_workbook_data(raw_data)
     output_path = _export_with_available_path(workbook_data, Path(args.output)) if args.output else None
     if args.db_preflight:
