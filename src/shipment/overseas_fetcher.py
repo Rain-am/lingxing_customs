@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from src.common.lingxing_client import LingxingClient, LingxingClientError
-from src.shipment.build_rows import _format_box_no
+from src.shipment.build_rows import _box_count_from_box_no, _format_box_no
 from src.shipment.fetcher import (
     LingxingApiDataSource,
     _as_list,
@@ -46,6 +46,7 @@ class OverseasWarehouseApiDataSource:
         purchase_batches: list[PurchaseBatch] = []
         sku_infos: dict[str, SkuInfo] = {}
         field_debug_rows: list[dict[str, Any]] = []
+        awd_debug_rows: list[dict[str, Any]] = []
 
         for header in headers:
             detail = self._fetch_detail(header)
@@ -53,11 +54,12 @@ class OverseasWarehouseApiDataSource:
             if shipment_time and _date_text(_first(detail_data, header, "real_delivery_time")) != shipment_time:
                 continue
             packing_data = self._fetch_packing_data(header, detail_data)
-            awd_center_codes = self._fetch_awd_center_codes(detail_data)
+            awd_center_codes, awd_debug = self._fetch_awd_center_codes(detail_data)
             items, batches, debug_rows = _map_overseas_detail(header, detail_data, packing_data, awd_center_codes)
             shipment_items.extend(items)
             purchase_batches.extend(batches)
             field_debug_rows.extend(debug_rows)
+            awd_debug_rows.extend(awd_debug)
             for item in items:
                 if item.sku and item.sku not in sku_infos:
                     sku_infos[item.sku] = SkuInfo(sku=item.sku)
@@ -68,7 +70,7 @@ class OverseasWarehouseApiDataSource:
             shipment_items=shipment_items,
             sku_infos=sku_infos,
             purchase_batches=purchase_batches,
-            metadata={"shipment_source": "overseas", "overseas_field_debug_rows": field_debug_rows},
+            metadata={"shipment_source": "overseas", "overseas_field_debug_rows": field_debug_rows, "overseas_awd_debug_rows": awd_debug_rows},
         )
 
     def _fetch_headers(self, shipment_time: str | None) -> list[dict[str, Any]]:
@@ -76,7 +78,7 @@ class OverseasWarehouseApiDataSource:
         offset = 0
         length = min(_client_page_size(self.client), 1000)
         while True:
-            payload: dict[str, Any] = {"offset": offset, "length": length}
+            payload: dict[str, Any] = {"offset": offset, "length": length, "status": 50}
             if shipment_time:
                 payload.update(
                     {
@@ -114,21 +116,32 @@ class OverseasWarehouseApiDataSource:
                 return {}
         return {}
 
-    def _fetch_awd_center_codes(self, detail: dict[str, Any]) -> dict[str, str]:
+    def _fetch_awd_center_codes(self, detail: dict[str, Any]) -> tuple[dict[str, str], list[dict[str, Any]]]:
         awd_ids = _awd_shipment_ids(detail)
         center_codes: dict[str, str] = {}
+        debug_rows: list[dict[str, Any]] = []
         for awd_id in awd_ids:
             for request_body in _awd_request_bodies(awd_id):
                 try:
                     data = self.client.post(self.awd_inbound_plan_detail_endpoint, request_body)
                 except LingxingClientError as exc:
+                    debug_rows.append({"awd_shipment_id": awd_id, "request_body": request_body, "matched": False, "error": str(exc)})
                     if _is_parameter_error(exc):
                         continue
                     break
-                center_codes.update(_awd_center_codes(data))
+                response_codes = _awd_center_codes(data)
+                center_codes.update(response_codes)
+                debug_rows.append(
+                    {
+                        "awd_shipment_id": awd_id,
+                        "request_body": request_body,
+                        "matched": awd_id in response_codes,
+                        "warehouseReferenceId": response_codes.get(awd_id, ""),
+                    }
+                )
                 if awd_id in center_codes:
                     break
-        return center_codes
+        return center_codes, debug_rows
 
     def _fetch_supplier_infos(self) -> dict[str, dict[str, str]]:
         return self.common_source._fetch_supplier_infos()
@@ -206,7 +219,7 @@ def _map_overseas_detail(
         product = _merge_product(product, header_products.get(sku, {}))
         product_box_info, box_info_matched = _box_info_for_product(box_info, product)
         box_no, box_no_source = _box_no_with_source(product_box_info, header, box_info_matched)
-        box_count = ""
+        box_count = _box_count_from_box_no(box_no) or ""
         total_gross_weight, gross_weight_source = _box_gross_weight_with_source(product_box_info)
         total_box_volume = _optional_decimal(_first(product_box_info, {}, "total_box_volume", "totalBoxVolume", "volume", "cbm"))
         awd_shipment_id = str(_first(product, {}, "awd_shipment_id", "awdShipmentId", "shipmentId") or "")
@@ -252,6 +265,9 @@ def _map_overseas_detail(
                 "gross_weight_source": gross_weight_source,
                 "transport_method": transport_method,
                 "transport_method_source": transport_source,
+                "awd_shipment_id": awd_shipment_id,
+                "logistics_center_code": awd_center_codes.get(awd_shipment_id, "") or _product_center_code(product, detail, header),
+                "logistics_center_source": "awd.inbound-plan.detail" if awd_center_codes.get(awd_shipment_id, "") else "product/header fallback or missing",
             }
         )
     return items, batches, debug_rows
@@ -769,13 +785,7 @@ def _packing_request_bodies(header: dict[str, Any], detail: dict[str, Any]) -> l
 
 
 def _awd_request_bodies(awd_id: str) -> list[dict[str, Any]]:
-    bodies = []
-    for key in ("shipmentId", "shipment_id", "awd_shipment_id", "awdShipmentId", "id", "shipment_id_list", "shipmentIdList"):
-        if key in ("shipment_id_list", "shipmentIdList"):
-            bodies.append({key: [awd_id]})
-            continue
-        bodies.append({key: awd_id})
-    return bodies
+    return [{"shipmentId": awd_id}]
 
 
 def _candidate_request_bodies(source: dict[str, Any], value_keys: tuple[str, ...], request_keys: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -817,6 +827,15 @@ def write_overseas_field_debug(raw_data: RawCustomsData) -> None:
     rows = raw_data.metadata.get("overseas_field_debug_rows")
     if not isinstance(rows, list) or not rows:
         return
+    awd_rows = raw_data.metadata.get("overseas_awd_debug_rows")
+    awd_debug_by_id: dict[str, list[dict[str, Any]]] = {}
+    if isinstance(awd_rows, list):
+        for awd_row in awd_rows:
+            if not isinstance(awd_row, dict):
+                continue
+            awd_id = str(awd_row.get("awd_shipment_id") or "")
+            if awd_id:
+                awd_debug_by_id.setdefault(awd_id, []).append(awd_row)
     enriched_rows: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
@@ -827,6 +846,8 @@ def write_overseas_field_debug(raw_data: RawCustomsData) -> None:
         enriched = dict(row)
         enriched["customs_name_cn"] = customs_name_cn
         enriched["customs_name_cn_source"] = "customs_product/productInfo" if customs_name_cn else "missing"
+        awd_id = str(enriched.get("awd_shipment_id") or "")
+        enriched["awd_debug"] = awd_debug_by_id.get(awd_id, [])
         enriched_rows.append(enriched)
     path = Path(debug_dir)
     path.mkdir(parents=True, exist_ok=True)

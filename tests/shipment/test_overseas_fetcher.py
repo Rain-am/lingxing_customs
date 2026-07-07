@@ -129,7 +129,7 @@ class OverseasClient:
                 "code": 0,
                 "data": {
                     "awdShipmentVOS": [
-                        {"shipmentId": "AWD-1", "warehouseReferenceId": "AWD-CENTER-1"},
+                        {"shipmentId": "AWD-1", "warehouseReferenceId": "IUSW"},
                     ]
                 },
             }
@@ -169,9 +169,16 @@ class OverseasClient:
 
 class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
     def test_load_maps_overseas_order_fields_to_raw_customs_data(self) -> None:
-        source = OverseasWarehouseApiDataSource(client=OverseasClient())
+        client = OverseasClient()
+        source = OverseasWarehouseApiDataSource(client=client)
 
         raw = source.load("2026-07-03")
+
+        list_payload = next(payload for endpoint, payload in client.post_payloads if endpoint.endswith("/owms/inbound/listInbound"))
+        self.assertEqual(list_payload["status"], 50)
+
+        awd_payload = next(payload for endpoint, payload in client.post_payloads if endpoint.endswith("/awd/inbound-plan/detail"))
+        self.assertEqual(awd_payload, {"shipmentId": "AWD-1"})
 
         item = raw.shipment_items[0]
         self.assertEqual(item.shipment_date, "2026-07-03")
@@ -186,9 +193,9 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(item.logistics_provider, "Overseas Carrier Company")
         self.assertEqual(item.logistics_channel, "Fast Channel")
         self.assertEqual(item.transport_method, "海运")
-        self.assertEqual(item.logistics_center_code, "AWD-CENTER-1")
+        self.assertEqual(item.logistics_center_code, "IUSW")
         self.assertEqual(item.box_no, "35-36")
-        self.assertEqual(item.box_count, "")
+        self.assertEqual(item.box_count, Decimal("2"))
         self.assertEqual(item.total_gross_weight, Decimal("11.50"))
         self.assertEqual(item.outer_box_size, "10*20*30")
         self.assertEqual(item.volume, Decimal("0.123456"))
@@ -199,6 +206,13 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(batch.domestic_source, "浙江义乌")
         self.assertEqual(batch.purchase_sn, "PO260701001")
         self.assertEqual(batch.purchase_unit_price, Decimal("3.25"))
+
+        field_debug = raw.metadata["overseas_field_debug_rows"][0]
+        self.assertEqual(field_debug["logistics_center_code"], "IUSW")
+
+        awd_debug = raw.metadata["overseas_awd_debug_rows"][0]
+        self.assertEqual(awd_debug["request_body"], {"shipmentId": "AWD-1"})
+        self.assertEqual(awd_debug["warehouseReferenceId"], "IUSW")
 
     def test_overseas_rows_can_build_customs_rows(self) -> None:
         raw = OverseasWarehouseApiDataSource(client=OverseasClient()).load("2026-07-03")
@@ -211,8 +225,8 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(row.shipment_no, "OW260703001")
         self.assertEqual(row.seller_name, "Shop A")
         self.assertEqual(row.box_no, "35-36")
-        self.assertEqual(row.box_count, "")
-        self.assertEqual(row.total_net_weight, Decimal("11.50"))
+        self.assertEqual(row.box_count, Decimal("2"))
+        self.assertEqual(row.total_net_weight, Decimal("9.50"))
         self.assertEqual(row.customs_name_cn, "Customs CN")
         self.assertEqual(row.unit, "pcs")
 
@@ -289,6 +303,7 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         raw = OverseasWarehouseApiDataSource(client=GenericPackingClient()).load("2026-07-03")
 
         self.assertEqual(raw.shipment_items[0].box_no, "35-36")
+        self.assertEqual(raw.shipment_items[0].box_count, Decimal("2"))
 
     def test_transport_prefers_sea_keyword_from_logistics_channel(self) -> None:
         class SeaChannelClient(OverseasClient):
@@ -304,6 +319,8 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         raw = OverseasWarehouseApiDataSource(client=SeaChannelClient()).load("2026-07-03")
 
         self.assertEqual(raw.shipment_items[0].transport_method, "海运")
+        debug_row = raw.metadata["overseas_field_debug_rows"][0]
+        self.assertEqual(debug_row["transport_method_source"], "logistics_way_name")
 
 
 if __name__ == "__main__":
