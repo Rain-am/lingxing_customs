@@ -127,6 +127,9 @@ class OverseasWarehouseApiDataSource:
                 debug_rows.append(
                     {
                         "awd_shipment_id": awd_id,
+                        "shipmentId": ref.get("shipmentId", ""),
+                        "orderId": ref.get("orderId", ""),
+                        "sid": ref.get("sid", ""),
                         "request_body": {},
                         "matched": False,
                         "error": "missing orderId or sid for AWD inbound plan detail",
@@ -136,13 +139,26 @@ class OverseasWarehouseApiDataSource:
             try:
                 data = self.client.post(self.awd_inbound_plan_detail_endpoint, request_body)
             except LingxingClientError as exc:
-                debug_rows.append({"awd_shipment_id": awd_id, "request_body": request_body, "matched": False, "error": str(exc)})
+                debug_rows.append(
+                    {
+                        "awd_shipment_id": awd_id,
+                        "shipmentId": ref.get("shipmentId", ""),
+                        "orderId": ref.get("orderId", ""),
+                        "sid": ref.get("sid", ""),
+                        "request_body": request_body,
+                        "matched": False,
+                        "error": str(exc),
+                    }
+                )
                 continue
             response_codes = _awd_center_codes(data)
             center_codes.update(response_codes)
             debug_rows.append(
                 {
                     "awd_shipment_id": awd_id,
+                    "shipmentId": ref.get("shipmentId", ""),
+                    "orderId": ref.get("orderId", ""),
+                    "sid": ref.get("sid", ""),
                     "request_body": request_body,
                     "matched": awd_id in response_codes,
                     "warehouseReferenceId": response_codes.get(awd_id, ""),
