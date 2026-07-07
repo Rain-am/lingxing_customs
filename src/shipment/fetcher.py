@@ -1170,12 +1170,29 @@ def _count_by_field(rows: list[dict[str, Any]], field: str) -> dict[str, int]:
 
 def _is_shipped(row: dict[str, Any], shipped_status: str) -> bool:
     status_value = _first(row, {}, "status", "status_name", "shipment_status", "state", "state_name")
+    status_text_values = [
+        str(value)
+        for value in (
+            row.get("status_name"),
+            row.get("shipment_status"),
+            row.get("state_name"),
+            row.get("state"),
+            row.get("status"),
+        )
+        if value not in (None, "")
+    ]
+    if any(_is_voided_status_text(value) for value in status_text_values):
+        return False
     if status_value in (None, ""):
         return True
     status_text = str(status_value)
     if status_text.isdigit():
         return True
     return shipped_status in status_text
+
+
+def _is_voided_status_text(value: str) -> bool:
+    return any(keyword in value for keyword in ("作废", "取消", "删除"))
 
 
 def _matches_shipment_time(row: dict[str, Any], shipment_time: str | None) -> bool:

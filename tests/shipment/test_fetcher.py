@@ -138,6 +138,39 @@ class LingxingApiDataSourceTest(unittest.TestCase):
         self.assertEqual(client.post_payloads[0][1]["shipment_time"], "2026-06-09")
         self.assertEqual(client.post_payloads[0][1]["time_type"], 0)
 
+    def test_filters_voided_shipment_from_status_name(self) -> None:
+        class VoidedShipmentClient(FakeClient):
+            def post(self, endpoint, payload):
+                self.post_payloads.append((endpoint, payload))
+                if endpoint.endswith("getInboundShipmentList"):
+                    if payload.get("status") == "\u5df2\u53d1\u8d27":
+                        rows = []
+                    elif payload.get("page", 1) == 1:
+                        rows = [
+                            {
+                                "shipment_sn": "SP260707014",
+                                "pick_time": "2026-07-07",
+                                "status": 3,
+                                "status_name": "\u5df2\u4f5c\u5e9f",
+                                "wname": WAREHOUSE,
+                            },
+                            {
+                                "shipment_sn": "SP260707015",
+                                "pick_time": "2026-07-07",
+                                "status": 1,
+                                "status_name": "\u5df2\u53d1\u8d27",
+                                "wname": WAREHOUSE,
+                            },
+                        ]
+                    else:
+                        rows = []
+                    return {"code": 0, "data": {"list": rows}}
+                return super().post(endpoint, payload)
+
+        rows = LingxingApiDataSource(client=VoidedShipmentClient())._fetch_shipment_headers("2026-07-07")
+
+        self.assertEqual([row["shipment_sn"] for row in rows], ["SP260707015"])
+
     def test_shipment_list_keeps_paging_when_api_returns_less_than_requested_page_size(self) -> None:
         class ShortPageClient(FakeClient):
             def post(self, endpoint, payload):
