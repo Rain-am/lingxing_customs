@@ -37,8 +37,9 @@ class ExportExcelTest(unittest.TestCase):
             self.assertIn('<c r="L1" t="inlineStr" s="1"><is><t>英文报关品名</t></is></c>', sheet_xml)
             self.assertIn('<c r="T1" t="inlineStr" s="1"><is><t>物流渠道</t></is></c>', sheet_xml)
             self.assertIn('<c r="U1" t="inlineStr" s="1"><is><t>运输方式</t></is></c>', sheet_xml)
+            self.assertIn('<c r="W1" t="inlineStr" s="1"><is><t>仓库分区</t></is></c>', sheet_xml)
             self.assertNotIn("物流方式", sheet_xml)
-            self.assertIn('<c r="AD1" t="inlineStr" s="1"><is><t>更新时间</t></is></c>', sheet_xml)
+            self.assertIn('<c r="AE1" t="inlineStr" s="1"><is><t>更新时间</t></is></c>', sheet_xml)
 
 
 if __name__ == "__main__":

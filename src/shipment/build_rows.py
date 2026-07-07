@@ -285,6 +285,7 @@ def _build_row(
         logistics_channel=item.logistics_channel,
         transport_method=item.transport_method,
         logistics_center_code=item.logistics_center_code,
+        logistics_center_region=item.logistics_center_region,
         package_type="cnts",
         box_no=box_no,
         box_count=box_count,

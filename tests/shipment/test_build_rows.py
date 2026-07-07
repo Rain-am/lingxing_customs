@@ -18,6 +18,40 @@ class BuildCustomsRowsTest(unittest.TestCase):
         self.assertEqual(_display_box_no("FBA001;FBA002/FBA003"), "FBA001,FBA002,FBA003")
         self.assertEqual(_display_box_no("FBA001"), "FBA001")
 
+    def test_builds_row_with_logistics_center_region(self) -> None:
+        raw = RawCustomsData(
+            shipment_items=[
+                ShipmentItem(
+                    shipment_date="2026-05-01",
+                    shipment_no="SP1",
+                    sku="SKU1",
+                    quantity=Decimal("1"),
+                    box_no="BOX1",
+                    logistics_center_code="ABE8",
+                    logistics_center_region="美东",
+                    purchase_unit_price=Decimal("1"),
+                    purchase_entity="Purchaser",
+                    supplier="Supplier",
+                    domestic_source="Source",
+                )
+            ],
+            sku_infos={
+                "SKU1": SkuInfo(
+                    sku="SKU1",
+                    product_name="Product",
+                    customs_name_cn="Customs",
+                    unit="pcs",
+                    gross_weight=Decimal("1"),
+                    outer_box_size="1*1*1",
+                )
+            },
+        )
+
+        row = build_customs_workbook_data(raw).customs_rows[0]
+
+        self.assertEqual(row.logistics_center_code, "ABE8")
+        self.assertEqual(row.logistics_center_region, "美东")
+
     def test_builds_rows_split_by_purchase_batch(self) -> None:
         raw = SampleDataSource().load()
 

@@ -47,6 +47,7 @@ def sample_row() -> CustomsRow:
         logistics_channel="物流渠道",
         transport_method="快递",
         logistics_center_code="ABE8",
+        logistics_center_region="美东",
         package_type="cnts",
         box_no="BOX001",
         box_count=Decimal("1"),
@@ -83,6 +84,7 @@ class ExportMySQLTest(unittest.TestCase):
             "logistics_channel",
             "tran_way",
             "center_id",
+            "centerid_region",
             "package",
             "box_no",
             "packing_carton_num",
@@ -102,8 +104,10 @@ class ExportMySQLTest(unittest.TestCase):
         self.assertEqual(values[4], "YYOUNG-US")
         self.assertEqual(values[15], "")
         self.assertEqual(values[21], "快递")
-        self.assertEqual(values[25], "1")
-        self.assertEqual(values[26], "21.41")
+        self.assertEqual(values[22], "ABE8")
+        self.assertEqual(values[23], "美东")
+        self.assertEqual(values[26], "1")
+        self.assertEqual(values[27], "21.41")
 
     def test_mysql_row_values_convert_invalid_shipment_month_to_null(self) -> None:
         row = sample_row()

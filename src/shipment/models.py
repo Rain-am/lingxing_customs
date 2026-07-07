@@ -27,6 +27,7 @@ class ShipmentItem:
     logistics_channel: str = ""
     transport_method: str = ""
     logistics_center_code: str = ""
+    logistics_center_region: str = ""
     volume: Decimal | None = None
     total_gross_weight: Decimal | None = None
     outer_box_size: str = ""
@@ -103,6 +104,7 @@ class CustomsRow:
     logistics_channel: str
     transport_method: str
     logistics_center_code: str
+    logistics_center_region: str
     package_type: str
     box_no: str
     box_count: Decimal | str

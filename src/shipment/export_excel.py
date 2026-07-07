@@ -30,6 +30,7 @@ CUSTOMS_HEADERS = [
     ("logistics_channel", "物流渠道"),
     ("transport_method", "运输方式"),
     ("logistics_center_code", "物流中心编码"),
+    ("logistics_center_region", "仓库分区"),
     ("package_type", "包装形式"),
     ("box_no", "箱号"),
     ("box_count", "箱数"),

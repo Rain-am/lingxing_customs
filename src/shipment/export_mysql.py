@@ -35,6 +35,7 @@ MYSQL_COLUMNS = [
     ("logistics_channel", "logistics_channel"),
     ("transport_method", "tran_way"),
     ("logistics_center_code", "center_id"),
+    ("logistics_center_region", "centerid_region"),
     ("package_type", "package"),
     ("box_no", "box_no"),
     ("box_count", "packing_carton_num"),
