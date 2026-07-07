@@ -44,7 +44,7 @@ class ShipmentJobTest(unittest.TestCase):
             patch("src.shipment.job.build_customs_workbook_data", return_value=SimpleNamespace(customs_rows=[], issue_rows=[], purchase_split_rows=[])),
             patch("src.shipment.job.export_customs_workbook") as export_excel,
             patch("src.shipment.job.preflight_customs_rows_mysql", return_value=SimpleNamespace(table="customs_bill_parcels", row_count=0, duplicate_id_count=0)),
-            patch("src.shipment.job.export_customs_rows_to_mysql", return_value=0),
+            patch("src.shipment.job.export_customs_rows_to_mysql", return_value=SimpleNamespace(upserted_rows=0, stale_deleted_by_source={})),
         ):
             run_shipment_job(args)
 

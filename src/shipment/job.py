@@ -45,8 +45,10 @@ def run_shipment_job(args: Any) -> None:
         print("MySQL preflight: OK")
         print(f"MySQL target table: {result.table}")
         print(f"MySQL rows ready: {result.row_count}")
-        db_rows = export_customs_rows_to_mysql(workbook_data)
-        print(f"MySQL rows upserted: {db_rows}")
+        db_result = export_customs_rows_to_mysql(workbook_data)
+        for source, deleted_rows in sorted(db_result.stale_deleted_by_source.items()):
+            print(f"MySQL stale {source} rows deleted: {deleted_rows}")
+        print(f"MySQL rows upserted: {db_result.upserted_rows}")
 
     if output_path:
         print(f"Generated customs workbook: {output_path.resolve()}")

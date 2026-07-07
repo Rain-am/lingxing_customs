@@ -62,6 +62,12 @@ class MySQLPreflightResult:
 
 
 @dataclass(frozen=True)
+class MySQLExportResult:
+    upserted_rows: int
+    stale_deleted_by_source: dict[str, int]
+
+
+@dataclass(frozen=True)
 class MySQLConfig:
     host: str
     port: int
@@ -120,9 +126,10 @@ class MySQLConfig:
         return config
 
 
-def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig | None = None) -> int:
+def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig | None = None) -> MySQLExportResult:
     config = config or MySQLConfig.from_env()
     rows = [mysql_row_values(row) for row in data.customs_rows]
+    stale_deleted_by_source: dict[str, int] = {}
 
     connection = None
     tunnel = None
@@ -130,6 +137,7 @@ def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig 
         connection, tunnel = _open_mysql_connection(config)
         with connection.cursor() as cursor:
             _validate_mysql_target(cursor, config.table, data)
+            stale_deleted_by_source = _delete_stale_rows_for_current_batch(cursor, config.table, data)
             if rows:
                 cursor.executemany(build_upsert_sql(config.table), rows)
         connection.commit()
@@ -142,7 +150,7 @@ def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig 
             connection.close()
         if tunnel is not None:
             tunnel.stop()
-    return len(rows)
+    return MySQLExportResult(upserted_rows=len(rows), stale_deleted_by_source=stale_deleted_by_source)
 
 
 def preflight_customs_rows_mysql(
@@ -248,6 +256,60 @@ def build_upsert_sql(table: str) -> str:
         if column != "id"
     )
     return f"INSERT INTO {_quote_identifier(table)} ({column_sql}) VALUES ({placeholders}) ON DUPLICATE KEY UPDATE {update_sql}"
+
+
+def build_delete_stale_sql(table: str, id_count: int) -> str:
+    if id_count <= 0:
+        raise MySQLExportError("Cannot build stale delete SQL without current id values")
+    placeholders = ", ".join(["%s"] * id_count)
+    return (
+        f"DELETE FROM {_quote_identifier(table)} "
+        "WHERE `confirm_shipment` = %s "
+        "AND `tran_id` LIKE %s "
+        f"AND `id` NOT IN ({placeholders})"
+    )
+
+
+def _delete_stale_rows_for_current_batch(cursor: Any, table: str, data: CustomsWorkbookData) -> dict[str, int]:
+    grouped_ids: dict[tuple[str, str], set[str]] = {}
+    for row in data.customs_rows:
+        source = _cleanup_source(row)
+        shipment_day = _mysql_shipment_day_value(row.shipment_day)
+        if not source or not shipment_day or not row.id:
+            continue
+        grouped_ids.setdefault((source, shipment_day), set()).add(row.id)
+
+    deleted_by_source: dict[str, int] = {}
+    for (source, shipment_day), ids in sorted(grouped_ids.items()):
+        if not ids:
+            continue
+        prefix = _source_tran_id_prefix(source)
+        if not prefix:
+            continue
+        sorted_ids = sorted(ids)
+        cursor.execute(build_delete_stale_sql(table, len(sorted_ids)), [shipment_day, prefix, *sorted_ids])
+        deleted_by_source[source] = deleted_by_source.get(source, 0) + int(getattr(cursor, "rowcount", 0) or 0)
+    return deleted_by_source
+
+
+def _cleanup_source(row: CustomsRow) -> str:
+    source = str(row.source or "").strip().lower()
+    if source in {"amazon", "overseas"}:
+        return source
+    shipment_no = str(row.shipment_no or "").upper()
+    if shipment_no.startswith("OWS"):
+        return "overseas"
+    if shipment_no.startswith("SP"):
+        return "amazon"
+    return ""
+
+
+def _source_tran_id_prefix(source: str) -> str:
+    if source == "amazon":
+        return "SP%"
+    if source == "overseas":
+        return "OWS%"
+    return ""
 
 
 def validate_table_columns(table_columns: Iterable[str]) -> None:
