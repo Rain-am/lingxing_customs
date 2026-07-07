@@ -178,7 +178,17 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(list_payload["status"], 50)
 
         awd_payload = next(payload for endpoint, payload in client.post_payloads if endpoint.endswith("/awd/inbound-shipment/page"))
-        self.assertEqual(awd_payload, {"shipmentId": "AWD-1"})
+        self.assertEqual(
+            awd_payload,
+            {
+                "page": 1,
+                "length": 100,
+                "dateType": 1,
+                "startDateTime": "2025-01-01",
+                "endDateTime": "2027-12-31",
+                "shipmentId": "AWD-1",
+            },
+        )
 
         item = raw.shipment_items[0]
         self.assertEqual(item.shipment_date, "2026-07-03")
@@ -211,7 +221,7 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(field_debug["logistics_center_code"], "IUSW")
 
         awd_debug = raw.metadata["overseas_awd_debug_rows"][0]
-        self.assertEqual(awd_debug["request_body"], {"shipmentId": "AWD-1"})
+        self.assertEqual(awd_debug["request_body"], awd_payload)
         self.assertEqual(awd_debug["warehouseReferenceId"], "IUSW")
 
     def test_awd_detail_is_not_called_without_shipment_id(self) -> None:

@@ -121,7 +121,7 @@ class OverseasWarehouseApiDataSource:
         center_codes: dict[str, str] = {}
         debug_rows: list[dict[str, Any]] = []
         for awd_id in awd_ids:
-            request_body = {"shipmentId": awd_id}
+            request_body = _awd_shipment_page_request_body(awd_id, detail)
             try:
                 data = self.client.post(self.awd_inbound_shipment_page_endpoint, request_body)
             except LingxingClientError as exc:
@@ -760,9 +760,7 @@ def _awd_shipment_ids(detail: dict[str, Any]) -> list[str]:
 
 def _awd_center_codes(data: dict[str, Any]) -> dict[str, str]:
     payload = data.get("data", data)
-    rows = []
-    if isinstance(payload, dict):
-        rows = _as_list(payload.get("awdShipmentVOS") or payload.get("awd_shipment_vos") or payload.get("list"))
+    rows = _awd_response_rows(payload)
     result: dict[str, str] = {}
     for row in rows:
         if not isinstance(row, dict):
@@ -772,6 +770,28 @@ def _awd_center_codes(data: dict[str, Any]) -> dict[str, str]:
         if shipment_id and center_code:
             result[shipment_id] = center_code
     return result
+
+
+def _awd_response_rows(payload: Any) -> list[Any]:
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    direct = (
+        payload.get("awdShipmentVOS")
+        or payload.get("awd_shipment_vos")
+        or payload.get("records")
+        or payload.get("list")
+        or payload.get("rows")
+    )
+    if direct:
+        return _as_list(direct)
+    for key in ("data", "page", "result"):
+        nested = payload.get(key)
+        rows = _awd_response_rows(nested)
+        if rows:
+            return rows
+    return []
 
 
 def _detail_request_bodies(header: dict[str, Any]) -> list[dict[str, Any]]:
@@ -789,6 +809,26 @@ def _packing_request_bodies(header: dict[str, Any], detail: dict[str, Any]) -> l
         ("overseas_order_no", "order_no", "orderNo", "inbound_no", "inboundNo", "id"),
         ("overseas_order_no", "order_no", "orderNo", "inbound_no", "inboundNo", "id"),
     )
+
+
+def _awd_shipment_page_request_body(awd_id: str, detail: dict[str, Any]) -> dict[str, Any]:
+    start_date, end_date = _awd_date_window(detail)
+    return {
+        "page": 1,
+        "length": 100,
+        "dateType": 1,
+        "startDateTime": start_date,
+        "endDateTime": end_date,
+        "shipmentId": awd_id,
+    }
+
+
+def _awd_date_window(detail: dict[str, Any]) -> tuple[str, str]:
+    date_value = _date_text(_first(detail, {}, "real_delivery_time", "update_time", "create_time"))
+    year = datetime.now().year
+    if len(date_value) >= 4 and date_value[:4].isdigit():
+        year = int(date_value[:4])
+    return f"{year - 1}-01-01", f"{year + 1}-12-31"
 
 
 def _candidate_request_bodies(source: dict[str, Any], value_keys: tuple[str, ...], request_keys: tuple[str, ...]) -> list[dict[str, Any]]:
