@@ -101,6 +101,8 @@ class OverseasClient:
                             "sku": "SKU-OW-1",
                             "product_name": "Overseas Product",
                             "awd_shipment_id": "AWD-1",
+                            "awd_order_id": "AWD-ORDER-1",
+                            "seller_id": "174",
                             "seller_arr": [{"seller_name": "Shop A"}],
                         }
                     ],
@@ -178,7 +180,7 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(list_payload["status"], 50)
 
         awd_payload = next(payload for endpoint, payload in client.post_payloads if endpoint.endswith("/awd/inbound-plan/detail"))
-        self.assertEqual(awd_payload, {"shipmentId": "AWD-1"})
+        self.assertEqual(awd_payload, {"orderId": "AWD-ORDER-1", "sid": "174", "shipmentId": "AWD-1"})
 
         item = raw.shipment_items[0]
         self.assertEqual(item.shipment_date, "2026-07-03")
@@ -211,8 +213,27 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(field_debug["logistics_center_code"], "IUSW")
 
         awd_debug = raw.metadata["overseas_awd_debug_rows"][0]
-        self.assertEqual(awd_debug["request_body"], {"shipmentId": "AWD-1"})
+        self.assertEqual(awd_debug["request_body"], {"orderId": "AWD-ORDER-1", "sid": "174", "shipmentId": "AWD-1"})
         self.assertEqual(awd_debug["warehouseReferenceId"], "IUSW")
+
+    def test_awd_detail_is_not_called_without_order_id(self) -> None:
+        class MissingAwdOrderClient(OverseasClient):
+            def post(self, endpoint, payload):
+                data = super().post(endpoint, payload)
+                if endpoint.endswith("/overSeaWarehouse/stockOrder/detail"):
+                    for product in data["data"]["products"]:
+                        product.pop("awd_order_id", None)
+                if endpoint.endswith("/awd/inbound-plan/detail"):
+                    raise AssertionError("AWD detail should not be called without orderId")
+                return data
+
+        raw = OverseasWarehouseApiDataSource(client=MissingAwdOrderClient()).load("2026-07-03")
+
+        item = raw.shipment_items[0]
+        self.assertEqual(item.logistics_center_code, "")
+        awd_debug = raw.metadata["overseas_awd_debug_rows"][0]
+        self.assertEqual(awd_debug["request_body"], {})
+        self.assertEqual(awd_debug["error"], "missing orderId or sid for AWD inbound plan detail")
 
     def test_overseas_rows_can_build_customs_rows(self) -> None:
         raw = OverseasWarehouseApiDataSource(client=OverseasClient()).load("2026-07-03")

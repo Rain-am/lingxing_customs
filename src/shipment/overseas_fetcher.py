@@ -54,7 +54,7 @@ class OverseasWarehouseApiDataSource:
             if shipment_time and _date_text(_first(detail_data, header, "real_delivery_time")) != shipment_time:
                 continue
             packing_data = self._fetch_packing_data(header, detail_data)
-            awd_center_codes, awd_debug = self._fetch_awd_center_codes(detail_data)
+            awd_center_codes, awd_debug = self._fetch_awd_center_codes(header, detail_data)
             items, batches, debug_rows = _map_overseas_detail(header, detail_data, packing_data, awd_center_codes)
             shipment_items.extend(items)
             purchase_batches.extend(batches)
@@ -116,31 +116,38 @@ class OverseasWarehouseApiDataSource:
                 return {}
         return {}
 
-    def _fetch_awd_center_codes(self, detail: dict[str, Any]) -> tuple[dict[str, str], list[dict[str, Any]]]:
-        awd_ids = _awd_shipment_ids(detail)
+    def _fetch_awd_center_codes(self, header: dict[str, Any], detail: dict[str, Any]) -> tuple[dict[str, str], list[dict[str, Any]]]:
+        awd_refs = _awd_shipment_refs(header, detail)
         center_codes: dict[str, str] = {}
         debug_rows: list[dict[str, Any]] = []
-        for awd_id in awd_ids:
-            for request_body in _awd_request_bodies(awd_id):
-                try:
-                    data = self.client.post(self.awd_inbound_plan_detail_endpoint, request_body)
-                except LingxingClientError as exc:
-                    debug_rows.append({"awd_shipment_id": awd_id, "request_body": request_body, "matched": False, "error": str(exc)})
-                    if _is_parameter_error(exc):
-                        continue
-                    break
-                response_codes = _awd_center_codes(data)
-                center_codes.update(response_codes)
+        for ref in awd_refs:
+            awd_id = ref["shipmentId"]
+            request_body = _awd_request_body(ref)
+            if not request_body:
                 debug_rows.append(
                     {
                         "awd_shipment_id": awd_id,
-                        "request_body": request_body,
-                        "matched": awd_id in response_codes,
-                        "warehouseReferenceId": response_codes.get(awd_id, ""),
+                        "request_body": {},
+                        "matched": False,
+                        "error": "missing orderId or sid for AWD inbound plan detail",
                     }
                 )
-                if awd_id in center_codes:
-                    break
+                continue
+            try:
+                data = self.client.post(self.awd_inbound_plan_detail_endpoint, request_body)
+            except LingxingClientError as exc:
+                debug_rows.append({"awd_shipment_id": awd_id, "request_body": request_body, "matched": False, "error": str(exc)})
+                continue
+            response_codes = _awd_center_codes(data)
+            center_codes.update(response_codes)
+            debug_rows.append(
+                {
+                    "awd_shipment_id": awd_id,
+                    "request_body": request_body,
+                    "matched": awd_id in response_codes,
+                    "warehouseReferenceId": response_codes.get(awd_id, ""),
+                }
+            )
         return center_codes, debug_rows
 
     def _fetch_supplier_infos(self) -> dict[str, dict[str, str]]:
@@ -742,13 +749,22 @@ def _outer_box_size(box_info: dict[str, Any]) -> str:
     return f"{length}*{width}*{height}"
 
 
-def _awd_shipment_ids(detail: dict[str, Any]) -> list[str]:
-    ids: list[str] = []
+def _awd_shipment_refs(header: dict[str, Any], detail: dict[str, Any]) -> list[dict[str, str]]:
+    refs: list[dict[str, str]] = []
     for product in _product_rows(detail):
-        value = _first(product, {}, "awd_shipment_id", "awdShipmentId", "shipmentId")
-        if value not in (None, "") and str(value) not in ids:
-            ids.append(str(value))
-    return ids
+        shipment_id = str(_first(product, {}, "awd_shipment_id", "awdShipmentId", "shipmentId") or "")
+        if not shipment_id:
+            continue
+        sid = str(_first(product, detail, "sid", "seller_id", "sellerId") or _first(header, {}, "sid", "seller_id", "sellerId") or "")
+        order_id = str(
+            _first(product, detail, "orderId", "order_id", "awd_order_id", "awdOrderId", "inbound_plan_order_id", "inboundPlanOrderId")
+            or _first(header, {}, "orderId", "order_id", "awd_order_id", "awdOrderId", "inbound_plan_order_id", "inboundPlanOrderId")
+            or ""
+        )
+        ref = {"shipmentId": shipment_id, "sid": sid, "orderId": order_id}
+        if ref not in refs:
+            refs.append(ref)
+    return refs
 
 
 def _awd_center_codes(data: dict[str, Any]) -> dict[str, str]:
@@ -784,8 +800,16 @@ def _packing_request_bodies(header: dict[str, Any], detail: dict[str, Any]) -> l
     )
 
 
-def _awd_request_bodies(awd_id: str) -> list[dict[str, Any]]:
-    return [{"shipmentId": awd_id}]
+def _awd_request_body(ref: dict[str, str]) -> dict[str, str]:
+    order_id = ref.get("orderId") or ""
+    sid = ref.get("sid") or ""
+    shipment_id = ref.get("shipmentId") or ""
+    if not order_id or not sid:
+        return {}
+    body = {"orderId": order_id, "sid": sid}
+    if shipment_id:
+        body["shipmentId"] = shipment_id
+    return body
 
 
 def _candidate_request_bodies(source: dict[str, Any], value_keys: tuple[str, ...], request_keys: tuple[str, ...]) -> list[dict[str, Any]]:
