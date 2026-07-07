@@ -257,7 +257,7 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(row.customs_name_cn, "Customs CN")
         self.assertEqual(row.unit, "pcs")
 
-    def test_overseas_duplicate_box_metrics_are_not_zeroed(self) -> None:
+    def test_overseas_duplicate_box_metrics_are_zeroed_after_first_sku(self) -> None:
         class MultiSkuClient(OverseasClient):
             def post(self, endpoint, payload):
                 data = super().post(endpoint, payload)
@@ -282,7 +282,7 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
                             "sku": "SKU-OW-2",
                             "boxInfo": [
                                 {
-                                    "boxRange": "37-38",
+                                    "boxRange": "35-36",
                                     "total_box_weight": "11.50",
                                     "total_box_volume": "0.123456",
                                     "cg_box_length": "10",
@@ -301,8 +301,8 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
                                 "total_box_volume": "0.123456",
                             },
                             "box_list": [
-                                {"box_no": "BOX-37", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
-                                {"box_no": "BOX-38", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
+                                {"box_no": "BOX-35", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
+                                {"box_no": "BOX-36", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
                             ],
                         }
                     )
@@ -313,9 +313,21 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         workbook = build_customs_workbook_data(raw)
 
         self.assertEqual(len(workbook.customs_rows), 2)
-        self.assertTrue(all(row.total_gross_weight == Decimal("11.50") for row in workbook.customs_rows))
-        self.assertTrue(all(row.outer_box_size == "10*20*30" for row in workbook.customs_rows))
-        self.assertTrue(all(row.volume == Decimal("0.123456") for row in workbook.customs_rows))
+        first, second = workbook.customs_rows
+        self.assertEqual(first.sku, "SKU-OW-1")
+        self.assertEqual(first.box_no, "35-36")
+        self.assertEqual(first.box_count, Decimal("2"))
+        self.assertEqual(first.total_gross_weight, Decimal("11.50"))
+        self.assertEqual(first.total_net_weight, Decimal("9.50"))
+        self.assertEqual(first.outer_box_size, "10*20*30")
+        self.assertEqual(first.volume, Decimal("0.123456"))
+        self.assertEqual(second.sku, "SKU-OW-2")
+        self.assertEqual(second.box_no, "35-36")
+        self.assertEqual(second.box_count, Decimal("0"))
+        self.assertEqual(second.total_gross_weight, Decimal("0"))
+        self.assertEqual(second.total_net_weight, Decimal("0"))
+        self.assertEqual(second.outer_box_size, "0")
+        self.assertEqual(second.volume, Decimal("0"))
 
     def test_box_no_falls_back_to_tracking_order_type_when_packing_is_not_sku_matched(self) -> None:
         class GenericPackingClient(OverseasClient):

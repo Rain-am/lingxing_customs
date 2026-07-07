@@ -459,8 +459,6 @@ def _sort_and_zero_duplicate_box_metrics(rows: list[CustomsRow]) -> None:
     seen: set[tuple[str, str]] = set()
     for row in rows:
         key = (row.shipment_no, row.box_no)
-        if row.source == "overseas":
-            continue
         if not row.box_no or key not in seen:
             if row.box_no:
                 seen.add(key)
