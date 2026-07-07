@@ -193,7 +193,7 @@ def _map_overseas_detail(
 ) -> tuple[list[ShipmentItem], list[PurchaseBatch], list[dict[str, Any]]]:
     products = _product_rows(detail) or _product_rows(header)
     header_products = _products_by_sku(header)
-    box_info = _packing_box_info(packing_data)
+    box_info = _detail_box_info(detail) + _packing_box_info(packing_data)
     shipment_no = str(_first(detail, header, "overseas_order_no", "order_no", "orderNo", "inbound_no", "inboundNo", "id") or "")
     shipment_date = _date_text(_first(detail, header, "real_delivery_time"))
     updated_at = _date_time_text(_first(header, detail, "update_time", "updated_at"))
@@ -204,7 +204,7 @@ def _map_overseas_detail(
     for product in products:
         sku = str(_first(product, {}, "sku", "seller_sku", "local_sku") or "")
         product = _merge_product(product, header_products.get(sku, {}))
-        product_box_info, box_info_matched = _box_info_for_product(box_info, sku)
+        product_box_info, box_info_matched = _box_info_for_product(box_info, product)
         box_no, box_no_source = _box_no_with_source(product_box_info, header, box_info_matched)
         box_count = ""
         total_gross_weight, gross_weight_source = _box_gross_weight_with_source(product_box_info)
@@ -215,6 +215,7 @@ def _map_overseas_detail(
             header,
             detail,
             str(_first(detail, header, "logistics_way_name", "logisticsWayName") or ""),
+            str(_first(detail, header, "logistics_name", "logisticsName") or ""),
         )
         item = ShipmentItem(
             shipment_date=shipment_date,
@@ -335,16 +336,24 @@ def _product_quantity(product: dict[str, Any], detail: dict[str, Any]) -> tuple[
     return Decimal("0"), "missing"
 
 
-def _overseas_transport_method_with_source(header: dict[str, Any], detail: dict[str, Any], logistics_channel: str = "") -> tuple[str, str]:
-    detail_transport = _transport_method_from_detail(detail)
-    if detail_transport:
-        return detail_transport, "detail.logisticsInfo.head_logistics_tracking_info.transport_type_name"
-    header_transport = _transport_method_from_header(header)
-    if header_transport:
-        return header_transport, "listInbound.head_logistics_list.tracking_list.transport_type"
-    channel_transport = _normalize_transport(logistics_channel)
-    if channel_transport:
-        return channel_transport, "logistics_way_name"
+def _overseas_transport_method_with_source(
+    header: dict[str, Any],
+    detail: dict[str, Any],
+    logistics_channel: str = "",
+    logistics_name: str = "",
+) -> tuple[str, str]:
+    candidates = [
+        (_transport_method_from_detail(detail), "detail.logisticsInfo.head_logistics_tracking_info.transport_type_name"),
+        (_transport_method_from_header(header), "listInbound.head_logistics_list.tracking_list.transport_type"),
+        (_normalize_transport(logistics_channel), "logistics_way_name"),
+        (_normalize_transport(logistics_name), "logistics_name"),
+    ]
+    for value, source in candidates:
+        if value == "\u6d77\u8fd0":
+            return value, source
+    for value, source in candidates:
+        if value:
+            return value, source
     return "", "missing"
 
 
@@ -520,46 +529,97 @@ def _combined_batch_text(product: dict[str, Any], *keys: str) -> str:
     return " / ".join(distinct)
 
 
+def _detail_box_info(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    box_data = detail.get("box_data") or detail.get("boxData")
+    if not isinstance(box_data, dict):
+        return []
+    return _box_info_rows_from_box_data(box_data, detail)
+
+
 def _packing_box_info(packing_data: dict[str, Any]) -> list[dict[str, Any]]:
     payload = packing_data.get("data", packing_data)
     if not isinstance(payload, dict):
         return []
     box_data = payload.get("box_data") or payload.get("boxData") or payload
+    rows = _box_info_rows_from_box_data(box_data, payload)
+    if rows:
+        return rows
+    box_list = payload.get("box_list") or payload.get("boxList") or []
+    if isinstance(box_list, list):
+        return _box_rows_from_root_box_list(box_list, payload)
+    return []
+
+
+def _box_info_rows_from_box_data(box_data: Any, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(box_data, dict):
+        return []
     rows: list[dict[str, Any]] = []
     for content in _as_list(box_data.get("box_content") if isinstance(box_data, dict) else None):
         if not isinstance(content, dict):
             continue
         box_info = content.get("boxInfo") or content.get("box_info") or {}
         box_list = content.get("box_list") or content.get("boxList") or []
-        merged = dict(content)
-        if isinstance(box_info, dict):
-            merged.update(box_info)
-        root_box_count = _first(payload, {}, "box_count", "boxCount")
-        if root_box_count not in (None, "") and "box_count" not in merged:
-            merged["box_count"] = root_box_count
-        if isinstance(box_list, list):
-            merged["box_list"] = box_list
-        rows.append(merged)
-    if rows:
-        return rows
-    box_list = payload.get("box_list") or payload.get("boxList") or []
-    if isinstance(box_list, list):
-        return [{"box_list": box_list, "box_count": payload.get("box_count") or payload.get("boxCount")}]
-    return []
+        info_rows = _as_list(box_info) or [{}]
+        for info in info_rows:
+            merged = dict(content)
+            if isinstance(info, dict):
+                merged.update(info)
+            root_box_count = _first(payload, {}, "box_count", "boxCount")
+            if root_box_count not in (None, "") and "box_count" not in merged:
+                merged["box_count"] = root_box_count
+            if isinstance(box_list, list):
+                merged["box_list"] = box_list
+            rows.append(merged)
+    return rows
 
 
-def _box_info_for_product(box_infos: list[dict[str, Any]], sku: str) -> tuple[dict[str, Any], bool]:
+def _box_rows_from_root_box_list(box_list: list[Any], payload: dict[str, Any]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    root_box_count = _first(payload, {}, "box_count", "boxCount")
+    for box in box_list:
+        if not isinstance(box, dict):
+            continue
+        items = [item for item in _as_list(box.get("items") or box.get("box_skus") or box.get("boxSkus")) if isinstance(item, dict)]
+        if not items:
+            key = ("", "", "")
+            grouped.setdefault(key, {"box_list": [], "box_count": root_box_count})["box_list"].append(box)
+            continue
+        for item in items:
+            key = (
+                str(_first(item, {}, "sku", "seller_sku", "local_sku") or ""),
+                str(_first(item, {}, "product_id", "productId", "id") or ""),
+                str(_first(item, {}, "fnsku", "FNSKU") or ""),
+            )
+            row = grouped.setdefault(
+                key,
+                {
+                    "sku": key[0],
+                    "product_id": key[1],
+                    "fnsku": key[2],
+                    "box_list": [],
+                    "box_count": root_box_count,
+                },
+            )
+            row["box_list"].append(box)
+    return list(grouped.values())
+
+
+def _box_info_for_product(box_infos: list[dict[str, Any]], product: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    sku = str(_first(product, {}, "sku", "seller_sku", "local_sku") or "")
+    product_id = str(_first(product, {}, "product_id", "productId", "id") or "")
+    fnsku = str(_first(product, {}, "fnsku", "FNSKU") or "")
+    match_values = {value for value in (sku, product_id, fnsku) if value}
     for box_info in box_infos:
-        if _box_info_contains_sku(box_info, sku):
+        if _box_info_contains_any(box_info, match_values):
             return box_info, True
     return (box_infos[0], False) if box_infos else ({}, False)
 
 
-def _box_info_contains_sku(box_info: dict[str, Any], sku: str) -> bool:
-    if not sku:
+def _box_info_contains_any(box_info: dict[str, Any], match_values: set[str]) -> bool:
+    if not match_values:
         return False
     for value in _walk_values(box_info):
-        if str(value or "") == sku:
+        if str(value or "") in match_values:
             return True
     return False
 
@@ -585,7 +645,7 @@ def _box_no(box_info: dict[str, Any]) -> str:
             values.append(str(value))
     if values:
         return "\n".join(values)
-    return str(_first(box_info, {}, "box_no", "boxNo", "carton_no", "case_no") or "")
+    return str(_first(box_info, {}, "boxRange", "box_range", "box_no", "boxNo", "carton_no", "case_no") or "")
 
 
 def _box_no_with_source(box_info: dict[str, Any], header: dict[str, Any], box_info_matched: bool) -> tuple[str, str]:
@@ -658,9 +718,9 @@ def _outer_box_size(box_info: dict[str, Any]) -> str:
     box_list = _as_list(box_info.get("box_list") or box_info.get("boxList"))
     if box_list and isinstance(box_list[0], dict):
         box = box_list[0]
-    length = _first(box, box_info, "length", "box_length", "boxLength")
-    width = _first(box, box_info, "width", "box_width", "boxWidth")
-    height = _first(box, box_info, "height", "box_height", "boxHeight")
+    length = _first(box, box_info, "length", "box_length", "boxLength", "cg_box_length", "cgBoxLength")
+    width = _first(box, box_info, "width", "box_width", "boxWidth", "cg_box_width", "cgBoxWidth")
+    height = _first(box, box_info, "height", "box_height", "boxHeight", "cg_box_height", "cgBoxHeight")
     if length in (None, "") or width in (None, "") or height in (None, ""):
         return ""
     return f"{length}*{width}*{height}"

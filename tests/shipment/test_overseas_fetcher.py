@@ -104,6 +104,24 @@ class OverseasClient:
                             "seller_arr": [{"seller_name": "Shop A"}],
                         }
                     ],
+                    "box_data": {
+                        "box_content": [
+                            {
+                                "sku": "SKU-OW-1",
+                                "fnsku": "FNSKU-OW-1",
+                                "boxInfo": [
+                                    {
+                                        "boxRange": "35-36",
+                                        "total_box_weight": "11.50",
+                                        "total_box_volume": "0.123456",
+                                        "cg_box_length": "10",
+                                        "cg_box_width": "20",
+                                        "cg_box_height": "30",
+                                    }
+                                ],
+                            }
+                        ]
+                    },
                 },
             }
         if endpoint.endswith("/awd/inbound-plan/detail"):
@@ -141,7 +159,7 @@ class OverseasClient:
                                     {"box_no": "BOX-35", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
                                     {"box_no": "BOX-36", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
                                 ],
-                            }
+                            },
                         ]
                     },
                 },
@@ -218,6 +236,21 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
                             ],
                         }
                     )
+                    data["data"]["box_data"]["box_content"].append(
+                        {
+                            "sku": "SKU-OW-2",
+                            "boxInfo": [
+                                {
+                                    "boxRange": "37-38",
+                                    "total_box_weight": "11.50",
+                                    "total_box_volume": "0.123456",
+                                    "cg_box_length": "10",
+                                    "cg_box_width": "20",
+                                    "cg_box_height": "30",
+                                }
+                            ],
+                        }
+                    )
                 if endpoint.endswith("/owms/inbound/getPackingData"):
                     data["data"]["box_data"]["box_content"].append(
                         {
@@ -227,8 +260,8 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
                                 "total_box_volume": "0.123456",
                             },
                             "box_list": [
-                                {"box_no": "BOX-35", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
-                                {"box_no": "BOX-36", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
+                                {"box_no": "BOX-37", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
+                                {"box_no": "BOX-38", "weight": "5.75", "length": "10", "width": "20", "height": "30"},
                             ],
                         }
                     )
@@ -247,6 +280,8 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         class GenericPackingClient(OverseasClient):
             def post(self, endpoint, payload):
                 data = super().post(endpoint, payload)
+                if endpoint.endswith("/overSeaWarehouse/stockOrder/detail"):
+                    data["data"].pop("box_data", None)
                 if endpoint.endswith("/owms/inbound/getPackingData"):
                     data["data"]["box_data"]["box_content"] = data["data"]["box_data"]["box_content"][:1]
                 return data
@@ -254,6 +289,21 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         raw = OverseasWarehouseApiDataSource(client=GenericPackingClient()).load("2026-07-03")
 
         self.assertEqual(raw.shipment_items[0].box_no, "35-36")
+
+    def test_transport_prefers_sea_keyword_from_logistics_channel(self) -> None:
+        class SeaChannelClient(OverseasClient):
+            def post(self, endpoint, payload):
+                data = super().post(endpoint, payload)
+                if endpoint.endswith("/overSeaWarehouse/stockOrder/detail"):
+                    data["data"]["logistics_way_name"] = "美森正班-卡派"
+                    data["data"]["logisticsInfo"]["head_logistics_tracking_info"] = [
+                        {"transport_type_name": "快递"},
+                    ]
+                return data
+
+        raw = OverseasWarehouseApiDataSource(client=SeaChannelClient()).load("2026-07-03")
+
+        self.assertEqual(raw.shipment_items[0].transport_method, "海运")
 
 
 if __name__ == "__main__":
