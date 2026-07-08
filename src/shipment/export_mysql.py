@@ -17,6 +17,7 @@ MYSQL_COLUMNS = [
     ("shipment_day", "confirm_shipment"),
     ("shipment_no", "tran_id"),
     ("seller_name", "seller_name"),
+    ("dest_country", "dest_country"),
     ("purchase_entity", "working_corp_name"),
     ("supplier", "supplier_name"),
     ("domestic_source", "supplier_addr"),

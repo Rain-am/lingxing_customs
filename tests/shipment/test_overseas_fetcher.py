@@ -100,6 +100,7 @@ class OverseasClient:
                         {
                             "sku": "SKU-OW-1",
                             "product_name": "Overseas Product",
+                            "country_name": "美国",
                             "awd_shipment_id": "AWD-1",
                             "seller_arr": [{"seller_name": "Shop A"}],
                         }
@@ -194,6 +195,7 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(item.shipment_date, "2026-07-03")
         self.assertEqual(item.shipment_no, "OW260703001")
         self.assertEqual(item.seller_name, "Shop A")
+        self.assertEqual(item.dest_country, "美国")
         self.assertEqual(item.sku, "SKU-OW-1")
         self.assertEqual(item.product_name, "Overseas Product")
         self.assertEqual(item.quantity, Decimal("24"))
@@ -251,6 +253,7 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(row.shipment_day, "2026-07-03")
         self.assertEqual(row.shipment_no, "OW260703001")
         self.assertEqual(row.seller_name, "Shop A")
+        self.assertEqual(row.dest_country, "美国")
         self.assertEqual(row.box_no, "35-36")
         self.assertEqual(row.box_count, Decimal("2"))
         self.assertEqual(row.total_net_weight, Decimal("9.50"))

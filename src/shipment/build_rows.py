@@ -266,6 +266,7 @@ def _build_row(
         shipment_day=_shipment_day(item.shipment_date),
         shipment_no=item.shipment_no,
         seller_name=item.seller_name,
+        dest_country=item.dest_country,
         purchase_entity=purchase_entity,
         supplier=supplier,
         domestic_source=domestic_source,

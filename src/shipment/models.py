@@ -18,6 +18,7 @@ class ShipmentItem:
     sku: str
     quantity: Decimal
     seller_name: str = ""
+    dest_country: str = ""
     product_name: str = ""
     updated_at: str = ""
     box_no: str = ""
@@ -85,6 +86,7 @@ class CustomsRow:
     shipment_day: str
     shipment_no: str
     seller_name: str
+    dest_country: str
     purchase_entity: str
     supplier: str
     domestic_source: str

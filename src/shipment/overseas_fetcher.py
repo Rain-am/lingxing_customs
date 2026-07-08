@@ -241,6 +241,7 @@ def _map_overseas_detail(
             sku=sku,
             quantity=quantity,
             seller_name=_seller_name(product),
+            dest_country=str(_first(product, detail, "country_name", "countryName") or ""),
             product_name=str(_first(product, {}, "product_name", "productName", "name") or ""),
             updated_at=updated_at,
             box_no=box_no,

@@ -395,6 +395,7 @@ def _map_shipment_item(header: dict[str, Any], payload: dict[str, Any]) -> Shipm
         sku=str(_first(payload, header, "sku", "seller_sku", "local_sku", "msku") or ""),
         quantity=decimal_or_zero(_first(payload, header, "quantity_shipped", "quantity", "qty", "ship_qty", "num")),
         seller_name=str(_first(payload, header, "sname", "seller_name", "sellerName", "shop_name", "shopName", "store_name", "storeName") or ""),
+        dest_country=str(_first(payload, header, "nation") or ""),
         product_name=str(_first(payload, header, "product_name", "product_name_cn", "name", "productName") or ""),
         updated_at=_updated_at_from_auxs(payload),
         box_no=str(_first(payload, box_info, "box_no", "boxNo", "carton_no", "case_no", "box_codes", "box_range") or ""),
