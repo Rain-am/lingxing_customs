@@ -249,7 +249,7 @@ def _map_overseas_detail(
             logistics_provider=_logistics_provider(str(_first(detail, header, "logistics_name", "logisticsName") or "")),
             logistics_channel=str(_first(detail, header, "logistics_way_name", "logisticsWayName") or ""),
             transport_method=transport_method,
-            logistics_center_code=awd_center_codes.get(awd_shipment_id, "") or _product_center_code(product, detail, header),
+            logistics_center_code="",
             volume=total_box_volume,
             total_gross_weight=total_gross_weight,
             outer_box_size=_outer_box_size(product_box_info),
@@ -272,8 +272,8 @@ def _map_overseas_detail(
                 "transport_method": transport_method,
                 "transport_method_source": transport_source,
                 "awd_shipment_id": awd_shipment_id,
-                "logistics_center_code": awd_center_codes.get(awd_shipment_id, "") or _product_center_code(product, detail, header),
-                "logistics_center_source": "awd.inbound-shipment.page" if awd_center_codes.get(awd_shipment_id, "") else "product/header fallback or missing",
+                "logistics_center_code": "",
+                "logistics_center_source": "blank by overseas rule",
             }
         )
     return items, batches, debug_rows
