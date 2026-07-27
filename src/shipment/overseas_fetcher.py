@@ -143,7 +143,7 @@ class OverseasWarehouseApiDataSource:
                     "shipmentId": awd_id,
                     "request_body": request_body,
                     "matched": awd_id in response_codes,
-                    "warehouseReferenceId": response_codes.get(awd_id, ""),
+                    "destinationShipperName": response_codes.get(awd_id, ""),
                 }
             )
         return center_codes, debug_rows
@@ -249,7 +249,7 @@ def _map_overseas_detail(
             logistics_provider=_logistics_provider(str(_first(detail, header, "logistics_name", "logisticsName") or "")),
             logistics_channel=str(_first(detail, header, "logistics_way_name", "logisticsWayName") or ""),
             transport_method=transport_method,
-            logistics_center_code="",
+            logistics_center_code=awd_center_codes.get(awd_shipment_id, ""),
             volume=total_box_volume,
             total_gross_weight=total_gross_weight,
             outer_box_size=_outer_box_size(product_box_info),
@@ -272,8 +272,10 @@ def _map_overseas_detail(
                 "transport_method": transport_method,
                 "transport_method_source": transport_source,
                 "awd_shipment_id": awd_shipment_id,
-                "logistics_center_code": "",
-                "logistics_center_source": "blank by overseas rule",
+                "logistics_center_code": awd_center_codes.get(awd_shipment_id, ""),
+                "logistics_center_source": "awd.inbound-shipment.page.destinationShipperName"
+                if awd_center_codes.get(awd_shipment_id, "")
+                else "awd destinationShipperName missing",
             }
         )
     return items, batches, debug_rows
@@ -767,7 +769,7 @@ def _awd_center_codes(data: dict[str, Any]) -> dict[str, str]:
         if not isinstance(row, dict):
             continue
         shipment_id = str(row.get("shipmentId") or row.get("shipment_id") or "")
-        center_code = str(row.get("warehouseReferenceId") or row.get("warehouse_reference_id") or "")
+        center_code = str(row.get("destinationShipperName") or row.get("destination_shipper_name") or "")
         if shipment_id and center_code:
             result[shipment_id] = center_code
     return result

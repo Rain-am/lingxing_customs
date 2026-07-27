@@ -129,8 +129,8 @@ class OverseasClient:
             return {
                 "code": 0,
                 "data": {
-                    "awdShipmentVOS": [
-                        {"shipmentId": "AWD-1", "warehouseReferenceId": "IUSW"},
+                    "records": [
+                        {"shipmentId": "AWD-1", "destinationShipperName": "IUSW"},
                     ]
                 },
             }
@@ -205,7 +205,7 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(item.logistics_provider, "Overseas Carrier Company")
         self.assertEqual(item.logistics_channel, "Fast Channel")
         self.assertEqual(item.transport_method, "海运")
-        self.assertEqual(item.logistics_center_code, "")
+        self.assertEqual(item.logistics_center_code, "IUSW")
         self.assertEqual(item.box_no, "35-36")
         self.assertEqual(item.box_count, Decimal("2"))
         self.assertEqual(item.total_gross_weight, Decimal("11.50"))
@@ -220,11 +220,11 @@ class OverseasWarehouseApiDataSourceTest(unittest.TestCase):
         self.assertEqual(batch.purchase_unit_price, Decimal("3.25"))
 
         field_debug = raw.metadata["overseas_field_debug_rows"][0]
-        self.assertEqual(field_debug["logistics_center_code"], "")
+        self.assertEqual(field_debug["logistics_center_code"], "IUSW")
 
         awd_debug = raw.metadata["overseas_awd_debug_rows"][0]
         self.assertEqual(awd_debug["request_body"], awd_payload)
-        self.assertEqual(awd_debug["warehouseReferenceId"], "IUSW")
+        self.assertEqual(awd_debug["destinationShipperName"], "IUSW")
 
     def test_awd_detail_is_not_called_without_shipment_id(self) -> None:
         class MissingAwdShipmentClient(OverseasClient):
