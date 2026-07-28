@@ -461,6 +461,68 @@ class BuildCustomsRowsTest(unittest.TestCase):
         self.assertEqual(row.outer_box_size, "20.70*18.50*1.90")
         self.assertEqual(row.volume, Decimal("0.123"))
 
+    def test_ring_piece_set_counts_as_one_copy(self) -> None:
+        raw = RawCustomsData(
+            shipment_items=[
+                ShipmentItem(
+                    shipment_date="2026-07-28",
+                    shipment_no="SP-RING-001",
+                    sku="A-SA-MI-8-W",
+                    quantity=Decimal("12"),
+                    product_name="3\u4ef6\u5957\u6212\u6307",
+                    box_no="BOX-1",
+                    box_count=Decimal("1"),
+                    purchase_unit_price=Decimal("2.50"),
+                )
+            ],
+            sku_infos={
+                "A-SA-MI-8-W": SkuInfo(
+                    sku="A-SA-MI-8-W",
+                    product_name="Ring",
+                    customs_name_cn="Ring customs",
+                    unit="\u4ef6\u5957",
+                    gross_weight=Decimal("1"),
+                    outer_box_size="1*1*1",
+                )
+            },
+        )
+
+        row = build_customs_workbook_data(raw).customs_rows[0]
+
+        self.assertEqual(row.pieces, Decimal("1"))
+        self.assertEqual(row.shipment_quantity, Decimal("12"))
+
+    def test_non_ring_piece_set_uses_existing_piece_parse(self) -> None:
+        raw = RawCustomsData(
+            shipment_items=[
+                ShipmentItem(
+                    shipment_date="2026-07-28",
+                    shipment_no="SP-BOX-001",
+                    sku="A-BOX-1",
+                    quantity=Decimal("12"),
+                    product_name="3\u4ef6\u5957\u6536\u7eb3\u76d2",
+                    box_no="BOX-1",
+                    box_count=Decimal("1"),
+                    purchase_unit_price=Decimal("2.50"),
+                )
+            ],
+            sku_infos={
+                "A-BOX-1": SkuInfo(
+                    sku="A-BOX-1",
+                    product_name="Box",
+                    customs_name_cn="Box customs",
+                    unit="\u4ef6\u5957",
+                    gross_weight=Decimal("1"),
+                    outer_box_size="1*1*1",
+                )
+            },
+        )
+
+        row = build_customs_workbook_data(raw).customs_rows[0]
+
+        self.assertEqual(row.pieces, Decimal("3"))
+        self.assertEqual(row.shipment_quantity, Decimal("36"))
+
     def test_detail_weight_and_volume_are_prorated_for_purchase_split(self) -> None:
         raw = RawCustomsData(
             shipment_items=[

@@ -433,6 +433,8 @@ def _row_volume(item: ShipmentItem, sku_info: SkuInfo, ratio: Decimal) -> Decima
 
 def _pieces_from_product_name(product_name: str, unit: str, fallback: Decimal) -> Decimal:
     text = product_name or ""
+    if _is_ring_product_name(text) and (re.search(r"\d+(?:\.\d+)?\s*件套", text) or unit == "件套"):
+        return Decimal("1")
     units = [unit] if unit else []
     units.extend(_KNOWN_UNITS)
     for candidate_unit in units:
@@ -442,6 +444,10 @@ def _pieces_from_product_name(product_name: str, unit: str, fallback: Decimal) -
         if match:
             return Decimal(match.group(1))
     return fallback
+
+
+def _is_ring_product_name(product_name: str) -> bool:
+    return bool(re.search(r"戒指|ring", str(product_name or ""), re.IGNORECASE))
 
 
 _KNOWN_UNITS = ["件", "个", "条", "套", "只", "双", "片", "包", "pcs", "PCS"]
