@@ -29,6 +29,8 @@ def build_customs_workbook_data(raw_data: RawCustomsData) -> CustomsWorkbookData
         sku_info = raw_data.sku_infos.get(item.sku, SkuInfo(sku=item.sku))
         item_batches = _match_batches(item, batches_by_item)
         _collect_sku_issues(item, sku_info, issues)
+        if not item.final_customer:
+            issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "最终客户", "未匹配店铺映射：请检查接口 shop_name、zzkh"))
 
         if item_batches:
             _append_batch_rows(item, sku_info, item_batches, customs_rows, purchase_split_rows, issues)
@@ -37,7 +39,7 @@ def build_customs_workbook_data(raw_data: RawCustomsData) -> CustomsWorkbookData
         if item.purchase_unit_price is None:
             issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "采购单价", "发货单列表未返回 fba_stock_cost"))
         if not item.purchase_entity:
-            issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "采购主体", "未匹配采购单/采购方资料：请检查 purchase_sn、采购单 purchaser_id、采购方列表 name"))
+            issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "采购主体", "未匹配店铺映射：请检查接口 shop_name、cgzt"))
         if not item.supplier:
             issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "供应商", "未匹配采购单资料"))
         if not item.domestic_source:
@@ -76,7 +78,7 @@ def _append_batch_rows(
         if not (batch.purchase_order_no or batch.purchase_sn):
             issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "采购单号", "发货单详情 purchase_items 未提供采购单号"))
         if not (batch.purchase_entity or item.purchase_entity):
-            issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "采购主体", "采购单/采购方资料未匹配：请检查 purchase_sn、采购单 purchaser_id、采购方列表 name"))
+            issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "采购主体", "未匹配店铺映射：请检查接口 shop_name、cgzt"))
         if not (batch.supplier or item.supplier):
             issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "供应商", "采购单资料未匹配"))
         if not (batch.domestic_source or item.domestic_source):
@@ -266,6 +268,7 @@ def _build_row(
         shipment_day=_shipment_day(item.shipment_date),
         shipment_no=item.shipment_no,
         seller_name=item.seller_name,
+        final_customer=item.final_customer,
         dest_country=item.dest_country,
         purchase_entity=purchase_entity,
         supplier=supplier,

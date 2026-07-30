@@ -13,6 +13,7 @@ CUSTOMS_HEADERS = [
     ("shipment_day", "确定出运日期"),
     ("shipment_no", "发货单号"),
     ("seller_name", "店铺"),
+    ("final_customer", "最终客户"),
     ("dest_country", "运抵国"),
     ("purchase_entity", "采购主体"),
     ("supplier", "供应商"),

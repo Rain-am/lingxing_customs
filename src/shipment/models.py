@@ -18,6 +18,7 @@ class ShipmentItem:
     sku: str
     quantity: Decimal
     seller_name: str = ""
+    final_customer: str = ""
     dest_country: str = ""
     product_name: str = ""
     updated_at: str = ""
@@ -114,6 +115,7 @@ class CustomsRow:
     total_net_weight: Decimal | str
     outer_box_size: str
     volume: Decimal | str
+    final_customer: str = ""
     source: str = ""
 
 

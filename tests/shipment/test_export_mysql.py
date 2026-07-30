@@ -29,6 +29,7 @@ def sample_row() -> CustomsRow:
         shipment_day="2026-06-09",
         shipment_no="SP260609001",
         seller_name="YYOUNG-US",
+        final_customer="最终客户",
         dest_country="美国",
         purchase_entity="采购方",
         supplier="供应商",
@@ -76,6 +77,7 @@ class ExportMySQLTest(unittest.TestCase):
             "confirm_shipment",
             "tran_id",
             "seller_name",
+            "final_cust",
             "dest_country",
             "working_corp_name",
             "supplier_name",
@@ -113,13 +115,14 @@ class ExportMySQLTest(unittest.TestCase):
         self.assertEqual(values[1], "2026-06")
         self.assertEqual(values[2], "2026-06-09")
         self.assertEqual(values[4], "YYOUNG-US")
-        self.assertEqual(values[5], "美国")
-        self.assertEqual(values[16], "")
-        self.assertEqual(values[22], "快递")
-        self.assertEqual(values[23], "ABE8")
-        self.assertEqual(values[24], "美东")
-        self.assertEqual(values[27], "1")
-        self.assertEqual(values[28], "21.41")
+        self.assertEqual(values[5], "最终客户")
+        self.assertEqual(values[6], "美国")
+        self.assertEqual(values[17], "")
+        self.assertEqual(values[23], "快递")
+        self.assertEqual(values[24], "ABE8")
+        self.assertEqual(values[25], "美东")
+        self.assertEqual(values[28], "1")
+        self.assertEqual(values[29], "21.41")
 
     def test_mysql_row_values_convert_invalid_shipment_month_to_null(self) -> None:
         row = sample_row()
@@ -134,6 +137,7 @@ class ExportMySQLTest(unittest.TestCase):
 
         self.assertIn("INSERT INTO `customs_bill_parcels`", sql)
         self.assertIn("`confirm_shipment`", sql)
+        self.assertIn("`final_cust`", sql)
         self.assertIn("`tran_way`", sql)
         self.assertIn("ON DUPLICATE KEY UPDATE", sql)
         update_clause = sql.split("ON DUPLICATE KEY UPDATE", 1)[1]
