@@ -301,9 +301,12 @@ class LingxingApiDataSource(CustomsDataSource):
         pending_purchase_sns = sorted(sn for sn in purchase_sns if sn)
         for purchase_sn in pending_purchase_sns:
             cached_order = self.cache.get("purchase_order", purchase_sn, ttl_days=30)
+            fallback_cached_order = None
             if isinstance(cached_order, dict) and _purchase_order_matches(cached_order, order_keys, purchase_sn):
-                orders[purchase_sn] = cached_order
-                continue
+                if not _purchase_order_has_placeholder_supplier(cached_order):
+                    orders[purchase_sn] = cached_order
+                    continue
+                fallback_cached_order = cached_order
             if purchase_sn in orders:
                 continue
             for request_body in _purchase_order_request_bodies(purchase_sn):
@@ -311,6 +314,8 @@ class LingxingApiDataSource(CustomsDataSource):
                     data = self.client.post(self.purchase_order_list_endpoint, request_body)
                 except LingxingClientError as exc:
                     if _is_permission_or_whitelist_error(exc):
+                        if fallback_cached_order is not None:
+                            orders[purchase_sn] = fallback_cached_order
                         return orders
                     continue
                 rows = _extract_rows(data)
@@ -322,6 +327,8 @@ class LingxingApiDataSource(CustomsDataSource):
                 if purchase_sn in orders:
                     self.cache.set("purchase_order", purchase_sn, orders[purchase_sn])
                     break
+            if purchase_sn not in orders and fallback_cached_order is not None:
+                orders[purchase_sn] = fallback_cached_order
         return orders
 
     def _fetch_purchaser_names(self) -> dict[str, str]:
@@ -953,6 +960,11 @@ def _first_matching_any(rows: list[dict[str, Any]], keys: tuple[str, ...], value
 
 def _purchase_order_matches(order: dict[str, Any], keys: tuple[str, ...], purchase_sn: str) -> bool:
     return any(str(order.get(key) or "") == purchase_sn for key in keys)
+
+
+def _purchase_order_has_placeholder_supplier(order: dict[str, Any]) -> bool:
+    supplier_name = _first(order, {}, "supplier_name", "supplier", "supplierName")
+    return str(supplier_name or "").strip().startswith("Supplier")
 
 
 def _coerce_int_string(value: str) -> int | str:

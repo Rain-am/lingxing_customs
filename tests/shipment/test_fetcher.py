@@ -294,6 +294,58 @@ class LingxingApiDataSourceTest(unittest.TestCase):
 
         self.assertEqual(orders["PO250917004"]["order_sn"], "PO250917004")
 
+    def test_purchase_order_placeholder_supplier_cache_refreshes_from_api(self) -> None:
+        class PurchaseOrderClient(FakeClient):
+            def post(self, endpoint, payload):
+                self.post_payloads.append((endpoint, payload))
+                if endpoint.endswith("purchaseOrderList"):
+                    return {
+                        "code": 0,
+                        "data": {"list": [{"order_sn": "PO260701001", "purchaser_id": 116, "supplier_name": "SU00002-LJ"}]},
+                    }
+                return super().post(endpoint, payload)
+
+        client = PurchaseOrderClient()
+        source = LingxingApiDataSource(client=client)
+        source.cache.set("purchase_order", "PO260701001", {"order_sn": "PO260701001", "supplier_name": "Supplier A"})
+
+        orders = source._fetch_purchase_orders({"PO260701001"})
+
+        purchase_order_payloads = [payload for endpoint, payload in client.post_payloads if endpoint.endswith("purchaseOrderList")]
+        self.assertEqual(len(purchase_order_payloads), 1)
+        self.assertEqual(orders["PO260701001"]["supplier_name"], "SU00002-LJ")
+        cached_order = source.cache.get("purchase_order", "PO260701001", ttl_days=30)
+        self.assertEqual(cached_order["supplier_name"], "SU00002-LJ")
+
+    def test_purchase_order_non_placeholder_supplier_cache_skips_api(self) -> None:
+        client = FakeClient()
+        source = LingxingApiDataSource(client=client)
+        source.cache.set("purchase_order", "PO260701001", {"order_sn": "PO260701001", "supplier_name": "SU00002-LJ"})
+
+        orders = source._fetch_purchase_orders({"PO260701001"})
+
+        purchase_order_payloads = [payload for endpoint, payload in client.post_payloads if endpoint.endswith("purchaseOrderList")]
+        self.assertEqual(purchase_order_payloads, [])
+        self.assertEqual(orders["PO260701001"]["supplier_name"], "SU00002-LJ")
+
+    def test_purchase_order_placeholder_supplier_cache_falls_back_when_api_fails(self) -> None:
+        class FailingPurchaseOrderClient(FakeClient):
+            def post(self, endpoint, payload):
+                self.post_payloads.append((endpoint, payload))
+                if endpoint.endswith("purchaseOrderList"):
+                    raise LingxingClientError("temporary purchase order API error")
+                return super().post(endpoint, payload)
+
+        client = FailingPurchaseOrderClient()
+        source = LingxingApiDataSource(client=client)
+        source.cache.set("purchase_order", "PO260701001", {"order_sn": "PO260701001", "supplier_name": "Supplier A"})
+
+        orders = source._fetch_purchase_orders({"PO260701001"})
+
+        purchase_order_payloads = [payload for endpoint, payload in client.post_payloads if endpoint.endswith("purchaseOrderList")]
+        self.assertEqual(len(purchase_order_payloads), 1)
+        self.assertEqual(orders["PO260701001"]["supplier_name"], "Supplier A")
+
     def test_refresh_cache_bypasses_sku_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             old_cache_dir = os.environ.get("LINGXING_CACHE_DIR")
