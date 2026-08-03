@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import unittest
+from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -9,6 +10,7 @@ from src.shipment.export_mysql import (
     MYSQL_COLUMNS,
     MySQLConfig,
     MySQLExportError,
+    build_delete_retention_sql,
     build_delete_stale_sql,
     build_upsert_sql,
     export_customs_rows_to_mysql,
@@ -152,6 +154,11 @@ class ExportMySQLTest(unittest.TestCase):
         self.assertIn("`tran_id` LIKE %s", sql)
         self.assertIn("`id` NOT IN (%s, %s)", sql)
 
+    def test_delete_retention_sql_deletes_rows_before_cutoff(self) -> None:
+        sql = build_delete_retention_sql("customs_bill_parcels")
+
+        self.assertEqual(sql, "DELETE FROM `customs_bill_parcels` WHERE `confirm_shipment` < %s")
+
     def test_validate_table_columns_reports_missing_columns(self) -> None:
         columns = [column for _, column in MYSQL_COLUMNS if column not in {"tran_way", "update_time"}]
 
@@ -266,11 +273,11 @@ class ExportMySQLTest(unittest.TestCase):
         fake_pymysql.connection = FakeConnection(
             columns=[column for _, column in MYSQL_COLUMNS],
             indexes=[{"Key_name": "PRIMARY", "Non_unique": 0, "Seq_in_index": 1, "Column_name": "id"}],
-            delete_rowcount=3,
+            delete_rowcounts=[3, 0],
         )
         config = mysql_config(use_ssh_tunnel=False)
 
-        with patch.object(export_mysql, "PyMySQLModule", fake_pymysql):
+        with patch.object(export_mysql, "PyMySQLModule", fake_pymysql), patch.object(export_mysql, "_today", return_value=date(2026, 6, 17)):
             result = export_customs_rows_to_mysql(
                 CustomsWorkbookData(customs_rows=[sample_row()], issue_rows=[], purchase_split_rows=[]),
                 config,
@@ -278,9 +285,11 @@ class ExportMySQLTest(unittest.TestCase):
 
         self.assertEqual(result.upserted_rows, 1)
         self.assertEqual(result.stale_deleted_by_source, {"amazon": 3})
+        self.assertEqual(result.retention_deleted_rows, 0)
         delete_calls = [(sql, params) for sql, params in fake_pymysql.connection.cursor_obj.execute_calls if sql.startswith("DELETE FROM")]
-        self.assertEqual(len(delete_calls), 1)
+        self.assertEqual(len(delete_calls), 2)
         self.assertEqual(delete_calls[0][1], ["2026-06-09", "SP%", "abc123"])
+        self.assertEqual(delete_calls[1][1], ["2026-06-11"])
         self.assertEqual(len(fake_pymysql.connection.cursor_obj.executemany_calls), 1)
 
     def test_export_deletes_stale_sources_independently(self) -> None:
@@ -288,11 +297,11 @@ class ExportMySQLTest(unittest.TestCase):
         fake_pymysql.connection = FakeConnection(
             columns=[column for _, column in MYSQL_COLUMNS],
             indexes=[{"Key_name": "PRIMARY", "Non_unique": 0, "Seq_in_index": 1, "Column_name": "id"}],
-            delete_rowcount=1,
+            delete_rowcounts=[1, 1, 0],
         )
         config = mysql_config(use_ssh_tunnel=False)
 
-        with patch.object(export_mysql, "PyMySQLModule", fake_pymysql):
+        with patch.object(export_mysql, "PyMySQLModule", fake_pymysql), patch.object(export_mysql, "_today", return_value=date(2026, 6, 17)):
             result = export_customs_rows_to_mysql(
                 CustomsWorkbookData(customs_rows=[sample_row(), overseas_row()], issue_rows=[], purchase_split_rows=[]),
                 config,
@@ -305,18 +314,21 @@ class ExportMySQLTest(unittest.TestCase):
         ]
         self.assertEqual(result.upserted_rows, 2)
         self.assertEqual(result.stale_deleted_by_source, {"amazon": 1, "overseas": 1})
+        self.assertEqual(result.retention_deleted_rows, 0)
         self.assertIn(["2026-06-09", "SP%", "abc123"], delete_params)
         self.assertIn(["2026-06-09", "OWS%", "ows123"], delete_params)
+        self.assertIn(["2026-06-11"], delete_params)
 
-    def test_export_empty_batch_does_not_delete_old_rows(self) -> None:
+    def test_export_empty_batch_runs_retention_without_stale_or_upsert(self) -> None:
         fake_pymysql = FakePyMySQL()
         fake_pymysql.connection = FakeConnection(
             columns=[column for _, column in MYSQL_COLUMNS],
             indexes=[{"Key_name": "PRIMARY", "Non_unique": 0, "Seq_in_index": 1, "Column_name": "id"}],
+            delete_rowcounts=[4],
         )
         config = mysql_config(use_ssh_tunnel=False)
 
-        with patch.object(export_mysql, "PyMySQLModule", fake_pymysql):
+        with patch.object(export_mysql, "PyMySQLModule", fake_pymysql), patch.object(export_mysql, "_today", return_value=date(2026, 6, 17)):
             result = export_customs_rows_to_mysql(
                 CustomsWorkbookData(customs_rows=[], issue_rows=[], purchase_split_rows=[]),
                 config,
@@ -324,7 +336,10 @@ class ExportMySQLTest(unittest.TestCase):
 
         self.assertEqual(result.upserted_rows, 0)
         self.assertEqual(result.stale_deleted_by_source, {})
-        self.assertFalse(any("DELETE FROM" in sql for sql, _ in fake_pymysql.connection.cursor_obj.execute_calls))
+        self.assertEqual(result.retention_deleted_rows, 4)
+        delete_calls = [(sql, params) for sql, params in fake_pymysql.connection.cursor_obj.execute_calls if sql.startswith("DELETE FROM")]
+        self.assertEqual(len(delete_calls), 1)
+        self.assertEqual(delete_calls[0][1], ["2026-06-11"])
         self.assertEqual(fake_pymysql.connection.cursor_obj.executemany_calls, [])
 
     def test_export_rolls_back_only_when_connection_exists(self) -> None:
@@ -378,10 +393,11 @@ def mysql_config(use_ssh_tunnel: bool) -> MySQLConfig:
 
 
 class FakeCursor:
-    def __init__(self, columns=None, indexes=None, delete_rowcount=0) -> None:
+    def __init__(self, columns=None, indexes=None, delete_rowcount=0, delete_rowcounts=None) -> None:
         self.columns = columns or []
         self.indexes = indexes or []
         self.delete_rowcount = delete_rowcount
+        self.delete_rowcounts = list(delete_rowcounts or [])
         self.last_sql = ""
         self.execute_calls = []
         self.executemany_calls = []
@@ -396,7 +412,10 @@ class FakeCursor:
     def execute(self, sql, params=None):
         self.last_sql = sql
         self.execute_calls.append((sql, params))
-        self.rowcount = self.delete_rowcount if sql.startswith("DELETE FROM") else 0
+        if sql.startswith("DELETE FROM"):
+            self.rowcount = self.delete_rowcounts.pop(0) if self.delete_rowcounts else self.delete_rowcount
+        else:
+            self.rowcount = 0
 
     def executemany(self, sql, rows):
         self.executemany_calls.append((sql, rows))
@@ -410,8 +429,13 @@ class FakeCursor:
 
 
 class FakeConnection:
-    def __init__(self, columns=None, indexes=None, delete_rowcount=0) -> None:
-        self.cursor_obj = FakeCursor(columns=columns, indexes=indexes, delete_rowcount=delete_rowcount)
+    def __init__(self, columns=None, indexes=None, delete_rowcount=0, delete_rowcounts=None) -> None:
+        self.cursor_obj = FakeCursor(
+            columns=columns,
+            indexes=indexes,
+            delete_rowcount=delete_rowcount,
+            delete_rowcounts=delete_rowcounts,
+        )
         self.committed = False
         self.rolled_back = False
         self.closed = False

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Iterable
 
@@ -67,6 +67,7 @@ class MySQLPreflightResult:
 class MySQLExportResult:
     upserted_rows: int
     stale_deleted_by_source: dict[str, int]
+    retention_deleted_rows: int = 0
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,7 @@ def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig 
     config = config or MySQLConfig.from_env()
     rows = [mysql_row_values(row) for row in data.customs_rows]
     stale_deleted_by_source: dict[str, int] = {}
+    retention_deleted_rows = 0
 
     connection = None
     tunnel = None
@@ -142,6 +144,7 @@ def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig 
             stale_deleted_by_source = _delete_stale_rows_for_current_batch(cursor, config.table, data)
             if rows:
                 cursor.executemany(build_upsert_sql(config.table), rows)
+            retention_deleted_rows = _delete_rows_before_retention_cutoff(cursor, config.table, _retention_cutoff())
         connection.commit()
     except Exception:
         if connection is not None:
@@ -152,7 +155,11 @@ def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig 
             connection.close()
         if tunnel is not None:
             tunnel.stop()
-    return MySQLExportResult(upserted_rows=len(rows), stale_deleted_by_source=stale_deleted_by_source)
+    return MySQLExportResult(
+        upserted_rows=len(rows),
+        stale_deleted_by_source=stale_deleted_by_source,
+        retention_deleted_rows=retention_deleted_rows,
+    )
 
 
 def preflight_customs_rows_mysql(
@@ -272,6 +279,10 @@ def build_delete_stale_sql(table: str, id_count: int) -> str:
     )
 
 
+def build_delete_retention_sql(table: str) -> str:
+    return f"DELETE FROM {_quote_identifier(table)} WHERE `confirm_shipment` < %s"
+
+
 def _delete_stale_rows_for_current_batch(cursor: Any, table: str, data: CustomsWorkbookData) -> dict[str, int]:
     grouped_ids: dict[tuple[str, str], set[str]] = {}
     for row in data.customs_rows:
@@ -292,6 +303,19 @@ def _delete_stale_rows_for_current_batch(cursor: Any, table: str, data: CustomsW
         cursor.execute(build_delete_stale_sql(table, len(sorted_ids)), [shipment_day, prefix, *sorted_ids])
         deleted_by_source[source] = deleted_by_source.get(source, 0) + int(getattr(cursor, "rowcount", 0) or 0)
     return deleted_by_source
+
+
+def _delete_rows_before_retention_cutoff(cursor: Any, table: str, cutoff: date) -> int:
+    cursor.execute(build_delete_retention_sql(table), [cutoff.isoformat()])
+    return int(getattr(cursor, "rowcount", 0) or 0)
+
+
+def _retention_cutoff(today: date | None = None) -> date:
+    return (today or _today()) - timedelta(days=6)
+
+
+def _today() -> date:
+    return date.today()
 
 
 def _cleanup_source(row: CustomsRow) -> str:
