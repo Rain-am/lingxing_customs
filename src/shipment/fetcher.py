@@ -10,6 +10,7 @@ from typing import Any
 
 from src.common.cache import JsonCache
 from src.common.lingxing_client import LingxingClient, LingxingClientError
+from src.shipment.build_rows import _box_count_from_box_no, _display_box_no
 from src.shipment.models import PurchaseBatch, RawCustomsData, ShipmentItem, SkuInfo, decimal_or_zero
 
 from .base import CustomsDataSource
@@ -707,11 +708,18 @@ def _expand_item_by_boxes(payload: dict[str, Any]) -> list[dict[str, Any]]:
         row["_matched_box_info"] = box
         quantity_in_case = _first(box_sku, {}, "quantity_in_case", "quantity", "qty", "num")
         if quantity_in_case not in (None, ""):
-            row["quantity_shipped"] = quantity_in_case
-            row["quantity"] = quantity_in_case
-            row["num"] = quantity_in_case
+            quantity = decimal_or_zero(quantity_in_case) * _packing_carton_count_for_payload(row)
+            row["quantity_shipped"] = quantity
+            row["quantity"] = quantity
+            row["num"] = quantity
         expanded.append(row)
     return expanded
+
+
+def _packing_carton_count_for_payload(payload: dict[str, Any]) -> Decimal:
+    box_info = _box_info_for_item(payload)
+    box_no = _display_box_no(str(_first(payload, box_info, "box_no", "boxNo", "carton_no", "case_no", "box_codes", "box_range") or ""))
+    return _box_count_from_box_no(box_no) or decimal_or_zero(_first(payload, box_info, "box_count", "boxCount", "carton_count", "box_num") or 1)
 
 
 def _matching_box_infos_for_item(payload: dict[str, Any]) -> list[tuple[dict[str, Any], dict[str, Any]]]:

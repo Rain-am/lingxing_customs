@@ -7,6 +7,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from src.common.lingxing_client import LingxingClientError
+from src.shipment.build_rows import build_customs_workbook_data
 from src.shipment.fetcher import LingxingApiDataSource
 
 
@@ -865,6 +866,70 @@ class LingxingApiDataSourceTest(unittest.TestCase):
         self.assertEqual([item.box_no for item in raw.shipment_items], ["ITEM-BOX-PACKED", "ITEM-BOX-PACKED"])
         self.assertEqual([item.quantity for item in raw.shipment_items], [Decimal("13"), Decimal("32")])
         self.assertEqual([batch.quantity for batch in raw.purchase_batches], [Decimal("13"), Decimal("32")])
+
+    def test_detail_expands_packed_box_quantity_by_packing_carton_count(self) -> None:
+        class PackedMultiCartonClient(EnrichmentClient):
+            def post(self, endpoint, payload):
+                self.post_payloads.append((endpoint, payload))
+                if endpoint.endswith("getInboundShipmentListMwsDetail"):
+                    return {
+                        "code": 0,
+                        "data": {
+                            "items": [
+                                {
+                                    "sku": "230920365301",
+                                    "product_name": "3pcs leggings 2XL",
+                                    "quantity_shipped": 43,
+                                    "num": 43,
+                                    "sku_box_key": "SKU-2XL",
+                                    "shipment_id": "FBA19L90S2ZX",
+                                    "msku": "FL-BBP-2XL",
+                                    "fba_stock_cost": "40.0000",
+                                    "box_no": "",
+                                    "purchase_items": [{"purchase_sn": "PO-1"}],
+                                }
+                            ],
+                            "box_list": [
+                                {
+                                    "box_num": 1,
+                                    "box_codes": "FBA19L90S2ZXU000001",
+                                    "box_skus": [
+                                        {
+                                            "sku_box_key": "SKU-2XL",
+                                            "sku": "230920365301",
+                                            "shipment_id": "FBA19L90S2ZX",
+                                            "msku": "FL-BBP-2XL",
+                                            "quantity_in_case": 21,
+                                        }
+                                    ],
+                                },
+                                {
+                                    "box_num": 99,
+                                    "box_codes": "FBA19L90S2ZXU000002\nFBA19L90S2ZXU000003",
+                                    "box_skus": [
+                                        {
+                                            "sku_box_key": "SKU-2XL",
+                                            "sku": "230920365301",
+                                            "shipment_id": "FBA19L90S2ZX",
+                                            "msku": "FL-BBP-2XL",
+                                            "quantity_in_case": 22,
+                                        }
+                                    ],
+                                },
+                            ],
+                        },
+                    }
+                return super().post(endpoint, payload)
+
+        raw = LingxingApiDataSource(client=PackedMultiCartonClient()).load("2026-06-09")
+
+        self.assertEqual([item.quantity for item in raw.shipment_items], [Decimal("21"), Decimal("44")])
+        self.assertEqual([item.box_count for item in raw.shipment_items], [Decimal("1"), Decimal("99")])
+        self.assertEqual([batch.quantity for batch in raw.purchase_batches], [Decimal("21"), Decimal("44")])
+
+        customs_rows = build_customs_workbook_data(raw).customs_rows
+        self.assertEqual([row.shipment_quantity for row in customs_rows], [Decimal("63"), Decimal("132")])
+        self.assertEqual([row.box_count for row in customs_rows], [Decimal("1"), Decimal("2")])
 
     def test_purchaser_env_map_fills_entity_when_purchaser_api_unavailable(self) -> None:
         class NoPurchaserPermissionClient(EnrichmentClient):
