@@ -129,7 +129,12 @@ class MySQLConfig:
         return config
 
 
-def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig | None = None) -> MySQLExportResult:
+def export_customs_rows_to_mysql(
+    data: CustomsWorkbookData,
+    config: MySQLConfig | None = None,
+    *,
+    delete_retention: bool = False,
+) -> MySQLExportResult:
     config = config or MySQLConfig.from_env()
     rows = [mysql_row_values(row) for row in data.customs_rows]
     stale_deleted_by_source: dict[str, int] = {}
@@ -144,7 +149,8 @@ def export_customs_rows_to_mysql(data: CustomsWorkbookData, config: MySQLConfig 
             stale_deleted_by_source = _delete_stale_rows_for_current_batch(cursor, config.table, data)
             if rows:
                 cursor.executemany(build_upsert_sql(config.table), rows)
-            retention_deleted_rows = _delete_rows_before_retention_cutoff(cursor, config.table, _retention_cutoff())
+            if delete_retention:
+                retention_deleted_rows = _delete_rows_before_retention_cutoff(cursor, config.table, _retention_cutoff())
         connection.commit()
     except Exception:
         if connection is not None:

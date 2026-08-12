@@ -46,7 +46,10 @@ def run_shipment_job(args: Any) -> None:
         print("MySQL preflight: OK")
         print(f"MySQL target table: {result.table}")
         print(f"MySQL rows ready: {result.row_count}")
-        db_result = export_customs_rows_to_mysql(workbook_data)
+        retention_cleanup = _retention_cleanup_for_this_run(args)
+        db_result = export_customs_rows_to_mysql(workbook_data, delete_retention=retention_cleanup)
+        if retention_cleanup:
+            _mark_retention_cleanup_done()
         for source, deleted_rows in sorted(db_result.stale_deleted_by_source.items()):
             print(f"MySQL stale {source} rows deleted: {deleted_rows}")
         print(f"MySQL retention rows deleted: {db_result.retention_deleted_rows}")
@@ -76,6 +79,29 @@ def _shipment_times(args: Any) -> list[str]:
         return [args.shipment_time]
     today = _today()
     return [(today - timedelta(days=1)).isoformat(), today.isoformat()]
+
+
+def _retention_cleanup_for_this_run(args: Any) -> bool:
+    if getattr(args, "shipment_time_provided", False):
+        return False
+    if not _is_retention_cleanup_window(_now()):
+        return False
+    cache = JsonCache()
+    key = _today().isoformat()
+    return cache.get("shipment_retention_cleanup", key, ttl_days=30) is None
+
+
+def _mark_retention_cleanup_done() -> None:
+    key = _today().isoformat()
+    JsonCache().set("shipment_retention_cleanup", key, {"date": key, "done_at": _now().isoformat(timespec="seconds")})
+
+
+def _is_retention_cleanup_window(now: datetime) -> bool:
+    return now.hour == 7 and now.minute < 5
+
+
+def _now() -> datetime:
+    return datetime.now()
 
 
 def _today() -> date:

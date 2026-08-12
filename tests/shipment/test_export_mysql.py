@@ -273,7 +273,7 @@ class ExportMySQLTest(unittest.TestCase):
         fake_pymysql.connection = FakeConnection(
             columns=[column for _, column in MYSQL_COLUMNS],
             indexes=[{"Key_name": "PRIMARY", "Non_unique": 0, "Seq_in_index": 1, "Column_name": "id"}],
-            delete_rowcounts=[3, 0],
+            delete_rowcounts=[3],
         )
         config = mysql_config(use_ssh_tunnel=False)
 
@@ -287,9 +287,8 @@ class ExportMySQLTest(unittest.TestCase):
         self.assertEqual(result.stale_deleted_by_source, {"amazon": 3})
         self.assertEqual(result.retention_deleted_rows, 0)
         delete_calls = [(sql, params) for sql, params in fake_pymysql.connection.cursor_obj.execute_calls if sql.startswith("DELETE FROM")]
-        self.assertEqual(len(delete_calls), 2)
+        self.assertEqual(len(delete_calls), 1)
         self.assertEqual(delete_calls[0][1], ["2026-06-09", "SP%", "abc123"])
-        self.assertEqual(delete_calls[1][1], ["2026-06-11"])
         self.assertEqual(len(fake_pymysql.connection.cursor_obj.executemany_calls), 1)
 
     def test_export_deletes_stale_sources_independently(self) -> None:
@@ -297,7 +296,7 @@ class ExportMySQLTest(unittest.TestCase):
         fake_pymysql.connection = FakeConnection(
             columns=[column for _, column in MYSQL_COLUMNS],
             indexes=[{"Key_name": "PRIMARY", "Non_unique": 0, "Seq_in_index": 1, "Column_name": "id"}],
-            delete_rowcounts=[1, 1, 0],
+            delete_rowcounts=[1, 1],
         )
         config = mysql_config(use_ssh_tunnel=False)
 
@@ -317,9 +316,29 @@ class ExportMySQLTest(unittest.TestCase):
         self.assertEqual(result.retention_deleted_rows, 0)
         self.assertIn(["2026-06-09", "SP%", "abc123"], delete_params)
         self.assertIn(["2026-06-09", "OWS%", "ows123"], delete_params)
-        self.assertIn(["2026-06-11"], delete_params)
 
-    def test_export_empty_batch_runs_retention_without_stale_or_upsert(self) -> None:
+    def test_export_empty_batch_skips_retention_by_default(self) -> None:
+        fake_pymysql = FakePyMySQL()
+        fake_pymysql.connection = FakeConnection(
+            columns=[column for _, column in MYSQL_COLUMNS],
+            indexes=[{"Key_name": "PRIMARY", "Non_unique": 0, "Seq_in_index": 1, "Column_name": "id"}],
+        )
+        config = mysql_config(use_ssh_tunnel=False)
+
+        with patch.object(export_mysql, "PyMySQLModule", fake_pymysql), patch.object(export_mysql, "_today", return_value=date(2026, 6, 17)):
+            result = export_customs_rows_to_mysql(
+                CustomsWorkbookData(customs_rows=[], issue_rows=[], purchase_split_rows=[]),
+                config,
+            )
+
+        self.assertEqual(result.upserted_rows, 0)
+        self.assertEqual(result.stale_deleted_by_source, {})
+        self.assertEqual(result.retention_deleted_rows, 0)
+        delete_calls = [(sql, params) for sql, params in fake_pymysql.connection.cursor_obj.execute_calls if sql.startswith("DELETE FROM")]
+        self.assertEqual(delete_calls, [])
+        self.assertEqual(fake_pymysql.connection.cursor_obj.executemany_calls, [])
+
+    def test_export_runs_retention_when_requested(self) -> None:
         fake_pymysql = FakePyMySQL()
         fake_pymysql.connection = FakeConnection(
             columns=[column for _, column in MYSQL_COLUMNS],
@@ -332,6 +351,7 @@ class ExportMySQLTest(unittest.TestCase):
             result = export_customs_rows_to_mysql(
                 CustomsWorkbookData(customs_rows=[], issue_rows=[], purchase_split_rows=[]),
                 config,
+                delete_retention=True,
             )
 
         self.assertEqual(result.upserted_rows, 0)

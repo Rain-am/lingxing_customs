@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 from threading import Barrier
-from datetime import date
+from datetime import date, datetime
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -52,6 +53,100 @@ class ShipmentJobTest(unittest.TestCase):
             run_shipment_job(args)
 
         export_excel.assert_not_called()
+
+    def test_default_write_db_runs_retention_cleanup_once_per_day(self) -> None:
+        args = SimpleNamespace(
+            clear_cache=False,
+            use_sample_data=True,
+            refresh_cache=False,
+            shipment_source="sample",
+            shipment_time=None,
+            shipment_time_provided=False,
+            output=None,
+            db_preflight=False,
+            write_db=True,
+        )
+        workbook_data = SimpleNamespace(customs_rows=[], issue_rows=[], purchase_split_rows=[])
+
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict("os.environ", {"LINGXING_CACHE_DIR": tmpdir}),
+                patch("src.shipment.job._today", return_value=date(2026, 8, 12)),
+                patch("src.shipment.job._now", return_value=datetime(2026, 8, 12, 7, 0)),
+                patch("src.shipment.job.SampleDataSource", return_value=FakeShipmentDataSource()),
+                patch("src.shipment.job.build_customs_workbook_data", return_value=workbook_data),
+                patch("src.shipment.job.preflight_customs_rows_mysql", return_value=SimpleNamespace(table="customs_bill_parcels", row_count=0, duplicate_id_count=0)),
+                patch(
+                    "src.shipment.job.export_customs_rows_to_mysql",
+                    return_value=SimpleNamespace(upserted_rows=0, stale_deleted_by_source={}, retention_deleted_rows=5),
+                ) as export_mysql,
+            ):
+                run_shipment_job(args)
+                run_shipment_job(args)
+
+        self.assertEqual([call.kwargs["delete_retention"] for call in export_mysql.call_args_list], [True, False])
+
+    def test_default_write_db_skips_retention_cleanup_after_morning_window(self) -> None:
+        args = SimpleNamespace(
+            clear_cache=False,
+            use_sample_data=True,
+            refresh_cache=False,
+            shipment_source="sample",
+            shipment_time=None,
+            shipment_time_provided=False,
+            output=None,
+            db_preflight=False,
+            write_db=True,
+        )
+        workbook_data = SimpleNamespace(customs_rows=[], issue_rows=[], purchase_split_rows=[])
+
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict("os.environ", {"LINGXING_CACHE_DIR": tmpdir}),
+                patch("src.shipment.job._today", return_value=date(2026, 8, 12)),
+                patch("src.shipment.job._now", return_value=datetime(2026, 8, 12, 7, 5)),
+                patch("src.shipment.job.SampleDataSource", return_value=FakeShipmentDataSource()),
+                patch("src.shipment.job.build_customs_workbook_data", return_value=workbook_data),
+                patch("src.shipment.job.preflight_customs_rows_mysql", return_value=SimpleNamespace(table="customs_bill_parcels", row_count=0, duplicate_id_count=0)),
+                patch(
+                    "src.shipment.job.export_customs_rows_to_mysql",
+                    return_value=SimpleNamespace(upserted_rows=0, stale_deleted_by_source={}, retention_deleted_rows=0),
+                ) as export_mysql,
+            ):
+                run_shipment_job(args)
+
+        self.assertFalse(export_mysql.call_args.kwargs["delete_retention"])
+
+    def test_explicit_shipment_time_write_db_skips_retention_cleanup(self) -> None:
+        args = SimpleNamespace(
+            clear_cache=False,
+            use_sample_data=True,
+            refresh_cache=False,
+            shipment_source="sample",
+            shipment_time="2026-08-05",
+            shipment_time_provided=True,
+            output=None,
+            db_preflight=False,
+            write_db=True,
+        )
+        workbook_data = SimpleNamespace(customs_rows=[], issue_rows=[], purchase_split_rows=[])
+
+        with TemporaryDirectory() as tmpdir:
+            with (
+                patch.dict("os.environ", {"LINGXING_CACHE_DIR": tmpdir}),
+                patch("src.shipment.job._today", return_value=date(2026, 8, 12)),
+                patch("src.shipment.job._now", return_value=datetime(2026, 8, 12, 7, 0)),
+                patch("src.shipment.job.SampleDataSource", return_value=FakeShipmentDataSource()),
+                patch("src.shipment.job.build_customs_workbook_data", return_value=workbook_data),
+                patch("src.shipment.job.preflight_customs_rows_mysql", return_value=SimpleNamespace(table="customs_bill_parcels", row_count=0, duplicate_id_count=0)),
+                patch(
+                    "src.shipment.job.export_customs_rows_to_mysql",
+                    return_value=SimpleNamespace(upserted_rows=0, stale_deleted_by_source={}, retention_deleted_rows=0),
+                ) as export_mysql,
+            ):
+                run_shipment_job(args)
+
+        self.assertFalse(export_mysql.call_args.kwargs["delete_retention"])
 
     def test_product_master_failure_does_not_stop_shipment_job(self) -> None:
         args = SimpleNamespace(
