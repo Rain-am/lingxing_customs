@@ -264,7 +264,7 @@ class BuildCustomsRowsTest(unittest.TestCase):
         self.assertEqual(workbook_data.customs_rows[0].purchase_entity, "Purchaser A")
         self.assertEqual(len(workbook_data.purchase_split_rows), 2)
 
-    def test_missing_fba_stock_cost_marks_pending_and_issue(self) -> None:
+    def test_missing_fba_stock_cost_uses_zero_and_keeps_issue(self) -> None:
         raw = RawCustomsData(
             shipment_items=[
                 ShipmentItem(
@@ -292,9 +292,55 @@ class BuildCustomsRowsTest(unittest.TestCase):
 
         workbook_data = build_customs_workbook_data(raw)
 
-        self.assertEqual(workbook_data.customs_rows[0].purchase_unit_price, "待确认")
+        self.assertEqual(workbook_data.customs_rows[0].purchase_unit_price, Decimal("0"))
         self.assertTrue(any(issue.field_name == "采购单价" for issue in workbook_data.issue_rows))
         self.assertTrue(any(issue.field_name == "采购主体" for issue in workbook_data.issue_rows))
+
+    def test_missing_batch_purchase_unit_price_uses_zero(self) -> None:
+        raw = RawCustomsData(
+            shipment_items=[
+                ShipmentItem(
+                    shipment_date="2026-05-01",
+                    shipment_no="FBA-001",
+                    sku="SKU-X",
+                    quantity=Decimal("5"),
+                    box_no="CTN-1",
+                    purchase_entity="采购主体甲",
+                    supplier="供应商甲",
+                    domestic_source="浙江义乌",
+                )
+            ],
+            sku_infos={
+                "SKU-X": SkuInfo(
+                    sku="SKU-X",
+                    product_name="产品X",
+                    customs_name_cn="产品X中文名",
+                    unit="个",
+                    package_type="纸箱",
+                    gross_weight=Decimal("1"),
+                    net_weight=Decimal("0.8"),
+                    outer_box_size="10*10*10cm",
+                )
+            },
+            purchase_batches=[
+                PurchaseBatch(
+                    shipment_no="FBA-001",
+                    sku="SKU-X",
+                    box_no="CTN-1",
+                    quantity=Decimal("5"),
+                    supplier="供应商甲",
+                    purchase_entity="采购主体甲",
+                    domestic_source="浙江义乌",
+                    purchase_sn="PO-1",
+                )
+            ],
+        )
+
+        workbook_data = build_customs_workbook_data(raw)
+
+        self.assertEqual(workbook_data.customs_rows[0].purchase_unit_price, Decimal("0"))
+        self.assertEqual(workbook_data.purchase_split_rows[0].purchase_unit_price, Decimal("0"))
+        self.assertTrue(any(issue.field_name == "采购单价" for issue in workbook_data.issue_rows))
 
     def test_uses_shipment_fba_stock_cost_without_purchase_batch(self) -> None:
         raw = RawCustomsData(

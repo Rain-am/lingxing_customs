@@ -17,6 +17,7 @@ from .models import (
 )
 
 PENDING = "待确认"
+ZERO_PURCHASE_UNIT_PRICE = Decimal("0")
 
 
 def build_customs_workbook_data(raw_data: RawCustomsData) -> CustomsWorkbookData:
@@ -95,7 +96,7 @@ def _append_batch_rows(
                 supplier=batch.supplier,
                 purchase_entity=batch.purchase_entity,
                 quantity=batch.quantity,
-                purchase_unit_price=batch.purchase_unit_price if batch.purchase_unit_price is not None else PENDING,
+                purchase_unit_price=_purchase_price_or_zero(batch.purchase_unit_price),
             )
         )
     customs_rows.append(_build_row_from_batches(item, sku_info, normalized_batches))
@@ -141,7 +142,7 @@ def _build_row_from_item(item: ShipmentItem, sku_info: SkuInfo, quantity: Decima
         purchase_entity=item.purchase_entity,
         supplier=item.supplier or PENDING,
         domestic_source=item.domestic_source or PENDING,
-        purchase_unit_price=item.purchase_unit_price if item.purchase_unit_price is not None else PENDING,
+        purchase_unit_price=_purchase_price_or_zero(item.purchase_unit_price),
     )
 
 
@@ -153,7 +154,7 @@ def _build_row_from_batch(item: ShipmentItem, sku_info: SkuInfo, batch: Purchase
         purchase_entity=batch.purchase_entity or item.purchase_entity,
         supplier=batch.supplier or item.supplier or PENDING,
         domestic_source=batch.domestic_source or item.domestic_source or PENDING,
-        purchase_unit_price=batch.purchase_unit_price if batch.purchase_unit_price is not None else item.purchase_unit_price or PENDING,
+        purchase_unit_price=_purchase_price_or_zero(batch.purchase_unit_price, item.purchase_unit_price),
     )
 
 
@@ -240,7 +241,14 @@ def _combined_price(batches: list[PurchaseBatch], item: ShipmentItem) -> Decimal
         return prices[0]
     if item.purchase_unit_price is not None:
         return item.purchase_unit_price
-    return PENDING
+    return ZERO_PURCHASE_UNIT_PRICE
+
+
+def _purchase_price_or_zero(*prices: Decimal | None) -> Decimal:
+    for price in prices:
+        if price is not None:
+            return price
+    return ZERO_PURCHASE_UNIT_PRICE
 
 
 def _build_row(
