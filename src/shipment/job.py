@@ -13,6 +13,7 @@ from src.shipment.build_rows import build_customs_workbook_data
 from src.shipment.export_excel import export_customs_workbook
 from src.shipment.export_mysql import export_customs_rows_to_mysql, preflight_customs_rows_mysql
 from src.shipment.fetcher import LingxingApiDataSource
+from src.shipment.issue_report import report_shipment_customs_data_issues
 from src.shipment.models import RawCustomsData
 from src.shipment.overseas_fetcher import OverseasWarehouseApiDataSource, write_overseas_field_debug
 from src.shipment.product_master import apply_product_master_data
@@ -34,6 +35,12 @@ def run_shipment_job(args: Any) -> None:
     _apply_warehouse_region_mapping(raw_data)
     write_overseas_field_debug(raw_data)
     workbook_data = build_customs_workbook_data(raw_data)
+    report_shipment_customs_data_issues(
+        raw_data,
+        workbook_data,
+        shipment_times=shipment_times,
+        source_names=_shipment_source_names(args),
+    )
     output_path = _export_with_available_path(workbook_data, Path(args.output)) if args.output else None
     if args.db_preflight:
         result = preflight_customs_rows_mysql(workbook_data)
@@ -53,6 +60,9 @@ def run_shipment_job(args: Any) -> None:
         for source, deleted_rows in sorted(db_result.stale_deleted_by_source.items()):
             print(f"MySQL stale {source} rows deleted: {deleted_rows}")
         print(f"MySQL retention rows deleted: {db_result.retention_deleted_rows}")
+        protected_skipped_rows = getattr(db_result, "protected_skipped_rows", 0)
+        if protected_skipped_rows:
+            print(f"MySQL protected rows skipped: {protected_skipped_rows}")
         print(f"MySQL rows upserted: {db_result.upserted_rows}")
 
     if output_path:

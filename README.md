@@ -118,6 +118,18 @@ vim .env
 - `MYSQL_DATABASE`
 - `MYSQL_TABLE=customs_bill_parcels`
 - `MYSQL_PRODUCT_TABLE=customs_product`
+- `CUSTOMS_PROTECTED_ROW_IDS`：可选，填入需要定时同步跳过 upsert 的报关行 `id`，多个值可用逗号分隔
+
+如需把报关服务器检测到的数据维护问题推送到供应链平台，继续配置：
+
+```env
+CUSTOMS_ISSUE_REPORT_ENABLED=1
+CUSTOMS_ISSUE_REPORT_URL=https://product.radiancewave.cn/api/internal/customs-data-issues/import
+CUSTOMS_ISSUE_REPORT_TOKEN=与平台 CUSTOMS_ISSUE_IMPORT_TOKEN 相同的密钥
+CUSTOMS_ISSUE_REPORT_TIMEOUT_SECONDS=15
+```
+
+启用后，发货计划同步会按 `来源 + 发货日期` 推送缺失字段快照；物料表同步会按全部启用 SKU 推送产品资料缺失快照。平台会把本次快照中已不存在的问题自动标记为已解决。
 
 如果数据库仍需通过 SSH 隧道访问，配置：
 

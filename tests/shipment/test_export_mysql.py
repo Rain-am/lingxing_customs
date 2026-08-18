@@ -317,6 +317,35 @@ class ExportMySQLTest(unittest.TestCase):
         self.assertIn(["2026-06-09", "SP%", "abc123"], delete_params)
         self.assertIn(["2026-06-09", "OWS%", "ows123"], delete_params)
 
+    def test_export_skips_protected_rows_without_deleting_them_as_stale(self) -> None:
+        fake_pymysql = FakePyMySQL()
+        fake_pymysql.connection = FakeConnection(
+            columns=[column for _, column in MYSQL_COLUMNS],
+            indexes=[{"Key_name": "PRIMARY", "Non_unique": 0, "Seq_in_index": 1, "Column_name": "id"}],
+            delete_rowcounts=[0],
+        )
+        protected = sample_row()
+        protected.id = "65d284a91e0aa7be"
+        protected.box_no = "FBA19LYY3F5GU000007"
+        normal = sample_row()
+        normal.id = "normal123"
+        normal.box_no = "FBA19LYY3F5GU000009"
+        config = mysql_config(use_ssh_tunnel=False)
+
+        with patch.object(export_mysql, "PyMySQLModule", fake_pymysql), patch.object(export_mysql, "_today", return_value=date(2026, 6, 17)):
+            result = export_customs_rows_to_mysql(
+                CustomsWorkbookData(customs_rows=[protected, normal], issue_rows=[], purchase_split_rows=[]),
+                config,
+            )
+
+        self.assertEqual(result.upserted_rows, 1)
+        self.assertEqual(result.protected_skipped_rows, 1)
+        delete_calls = [(sql, params) for sql, params in fake_pymysql.connection.cursor_obj.execute_calls if sql.startswith("DELETE FROM")]
+        self.assertEqual(delete_calls[0][1], ["2026-06-09", "SP%", "65d284a91e0aa7be", "normal123"])
+        self.assertEqual(len(fake_pymysql.connection.cursor_obj.executemany_calls), 1)
+        upsert_rows = fake_pymysql.connection.cursor_obj.executemany_calls[0][1]
+        self.assertEqual([row[0] for row in upsert_rows], ["normal123"])
+
     def test_export_empty_batch_skips_retention_by_default(self) -> None:
         fake_pymysql = FakePyMySQL()
         fake_pymysql.connection = FakeConnection(

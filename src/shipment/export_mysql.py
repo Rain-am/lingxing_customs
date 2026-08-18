@@ -48,6 +48,11 @@ MYSQL_COLUMNS = [
     ("updated_at", "update_time"),
 ]
 
+DEFAULT_PROTECTED_CUSTOMS_ROW_IDS = {
+    "65d284a91e0aa7be",
+    "0ee5728c8df7367d",
+}
+
 SSHTunnelForwarderFactory: Any | None = None
 PyMySQLModule: Any | None = None
 
@@ -68,6 +73,7 @@ class MySQLExportResult:
     upserted_rows: int
     stale_deleted_by_source: dict[str, int]
     retention_deleted_rows: int = 0
+    protected_skipped_rows: int = 0
 
 
 @dataclass(frozen=True)
@@ -136,7 +142,10 @@ def export_customs_rows_to_mysql(
     delete_retention: bool = False,
 ) -> MySQLExportResult:
     config = config or MySQLConfig.from_env()
-    rows = [mysql_row_values(row) for row in data.customs_rows]
+    protected_ids = _protected_customs_row_ids()
+    writable_rows = [row for row in data.customs_rows if row.id not in protected_ids]
+    rows = [mysql_row_values(row) for row in writable_rows]
+    protected_skipped_rows = len(data.customs_rows) - len(writable_rows)
     stale_deleted_by_source: dict[str, int] = {}
     retention_deleted_rows = 0
 
@@ -165,7 +174,17 @@ def export_customs_rows_to_mysql(
         upserted_rows=len(rows),
         stale_deleted_by_source=stale_deleted_by_source,
         retention_deleted_rows=retention_deleted_rows,
+        protected_skipped_rows=protected_skipped_rows,
     )
+
+
+def _protected_customs_row_ids() -> set[str]:
+    configured = set(_split_env_values(os.getenv("CUSTOMS_PROTECTED_ROW_IDS", "")))
+    return DEFAULT_PROTECTED_CUSTOMS_ROW_IDS | configured
+
+
+def _split_env_values(value: str) -> list[str]:
+    return [part.strip() for part in re.split(r"[\s,;]+", str(value or "")) if part.strip()]
 
 
 def preflight_customs_rows_mysql(

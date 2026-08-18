@@ -49,10 +49,12 @@ class ShipmentJobTest(unittest.TestCase):
                 "src.shipment.job.export_customs_rows_to_mysql",
                 return_value=SimpleNamespace(upserted_rows=0, stale_deleted_by_source={}, retention_deleted_rows=0),
             ),
+            patch("src.shipment.job.report_shipment_customs_data_issues") as report_issues,
         ):
             run_shipment_job(args)
 
         export_excel.assert_not_called()
+        report_issues.assert_called_once()
 
     def test_default_write_db_runs_retention_cleanup_once_per_day(self) -> None:
         args = SimpleNamespace(
@@ -80,6 +82,7 @@ class ShipmentJobTest(unittest.TestCase):
                     "src.shipment.job.export_customs_rows_to_mysql",
                     return_value=SimpleNamespace(upserted_rows=0, stale_deleted_by_source={}, retention_deleted_rows=5),
                 ) as export_mysql,
+                patch("src.shipment.job.report_shipment_customs_data_issues"),
             ):
                 run_shipment_job(args)
                 run_shipment_job(args)
@@ -112,6 +115,7 @@ class ShipmentJobTest(unittest.TestCase):
                     "src.shipment.job.export_customs_rows_to_mysql",
                     return_value=SimpleNamespace(upserted_rows=0, stale_deleted_by_source={}, retention_deleted_rows=0),
                 ) as export_mysql,
+                patch("src.shipment.job.report_shipment_customs_data_issues"),
             ):
                 run_shipment_job(args)
 
@@ -143,6 +147,7 @@ class ShipmentJobTest(unittest.TestCase):
                     "src.shipment.job.export_customs_rows_to_mysql",
                     return_value=SimpleNamespace(upserted_rows=0, stale_deleted_by_source={}, retention_deleted_rows=0),
                 ) as export_mysql,
+                patch("src.shipment.job.report_shipment_customs_data_issues"),
             ):
                 run_shipment_job(args)
 
@@ -166,6 +171,7 @@ class ShipmentJobTest(unittest.TestCase):
             patch("src.shipment.job.apply_product_master_data", side_effect=RuntimeError("db down")),
             patch("src.shipment.job.build_customs_workbook_data", return_value=workbook_data) as build_rows,
             patch("src.shipment.job.export_customs_workbook") as export_excel,
+            patch("src.shipment.job.report_shipment_customs_data_issues"),
         ):
             run_shipment_job(args)
 

@@ -8,6 +8,7 @@ from typing import Any
 
 from src.product.export_mysql import export_products_to_mysql
 from src.product.fetcher import ProductApiDataSource
+from src.product.issue_report import report_product_customs_data_issues
 
 
 def run_product_job(args: Any) -> None:
@@ -50,6 +51,7 @@ def run_product_job(args: Any) -> None:
     print(f"MySQL product rows inserted: {result.inserted_rows}")
     print(f"MySQL product rows updated: {result.updated_rows}")
     print(f"MySQL product rows skipped: {result.skipped_rows}")
+    report_product_customs_data_issues()
     _print_api_performance_summary()
 
 

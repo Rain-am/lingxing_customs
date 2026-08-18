@@ -30,10 +30,11 @@ class ProductJobTest(unittest.TestCase):
         with patch("src.product.job.ProductApiDataSource", return_value=data_source), patch(
             "src.product.job.export_products_to_mysql",
             return_value=SimpleNamespace(table="customs_product", deleted_rows=0, total_rows=0, inserted_rows=0, updated_rows=0, skipped_rows=0),
-        ):
+        ), patch("src.product.job.report_product_customs_data_issues") as report_issues:
             run_product_job(args)
 
         self.assertEqual(data_source.load_all_calls, [("2026-06-17", "2026-06-18")])
+        report_issues.assert_called_once_with()
 
     def test_run_product_job_uses_default_window_when_dates_omitted(self) -> None:
         class FixedDate(date):
@@ -47,10 +48,11 @@ class ProductJobTest(unittest.TestCase):
         with patch("src.product.job.date", FixedDate), patch("src.product.job.ProductApiDataSource", return_value=data_source), patch(
             "src.product.job.export_products_to_mysql",
             return_value=SimpleNamespace(table="customs_product", deleted_rows=0, total_rows=0, inserted_rows=0, updated_rows=0, skipped_rows=0),
-        ):
+        ), patch("src.product.job.report_product_customs_data_issues") as report_issues:
             run_product_job(args)
 
         self.assertEqual(data_source.load_all_calls, [("2026-06-17", "2026-06-18")])
+        report_issues.assert_called_once_with()
 
 
 class FakeProductDataSource:
