@@ -58,28 +58,30 @@ def build_product_issue_payloads(rows: Iterable[Mapping[str, Any]]) -> list[dict
         if not sku:
             continue
         product_name = _text(row.get("name"))
-        for column, field_name in REQUIRED_PRODUCT_FIELDS:
-            if not _missing(row.get(column)):
-                continue
-            issues.append(
-                {
-                    "issue_key": stable_issue_key("product", PRODUCT_ISSUE_SOURCE, sku, field_name),
-                    "scope": "product",
-                    "category": "product_master",
-                    "severity": "high",
-                    "source": PRODUCT_ISSUE_SOURCE,
+        missing_fields = [(column, field_name) for column, field_name in REQUIRED_PRODUCT_FIELDS if _missing(row.get(column))]
+        if not missing_fields:
+            continue
+        field_names = [field_name for _, field_name in missing_fields]
+        issues.append(
+            {
+                "issue_key": stable_issue_key("product", PRODUCT_ISSUE_SOURCE, sku),
+                "scope": "product",
+                "category": "product_master",
+                "severity": "high",
+                "source": PRODUCT_ISSUE_SOURCE,
+                "sku": sku,
+                "product_name": product_name,
+                "field_name": "产品资料",
+                "issue": "产品资料缺失：" + "、".join(field_names),
+                "fix_hint": "请在领星本地产品/报关资料中维护缺失字段，并等待物料表同步。",
+                "raw_json": {
                     "sku": sku,
-                    "product_name": product_name,
-                    "field_name": field_name,
-                    "issue": f"产品资料缺失：{field_name}",
-                    "fix_hint": "请在领星本地产品/报关资料中维护该字段，并等待物料表同步。",
-                    "raw_json": {
-                        "sku": sku,
-                        "column": column,
-                        "update_time": _text(row.get("update_time")),
-                    },
-                }
-            )
+                    "missing_columns": [column for column, _ in missing_fields],
+                    "missing_fields": field_names,
+                    "update_time": _text(row.get("update_time")),
+                },
+            }
+        )
     return issues
 
 

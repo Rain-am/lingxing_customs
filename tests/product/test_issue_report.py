@@ -9,7 +9,7 @@ from src.shipment.export_mysql import MySQLConfig
 
 
 class ProductIssueReportTest(unittest.TestCase):
-    def test_builds_one_issue_per_missing_required_field(self) -> None:
+    def test_builds_one_issue_per_product_with_missing_required_fields(self) -> None:
         payloads = build_product_issue_payloads(
             [
                 {
@@ -24,7 +24,11 @@ class ProductIssueReportTest(unittest.TestCase):
             ]
         )
 
-        self.assertEqual([item["field_name"] for item in payloads], ["中文报关品名", "海关编码"])
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["field_name"], "产品资料")
+        self.assertEqual(payloads[0]["issue"], "产品资料缺失：中文报关品名、海关编码")
+        self.assertEqual(payloads[0]["raw_json"]["missing_fields"], ["中文报关品名", "海关编码"])
+        self.assertEqual(payloads[0]["raw_json"]["missing_columns"], ["chinese_customs_name", "customs_code"])
         self.assertEqual(payloads[0]["scope"], "product")
         self.assertEqual(payloads[0]["source"], "product_sync")
         self.assertEqual(payloads[0]["category"], "product_master")
@@ -45,7 +49,8 @@ class ProductIssueReportTest(unittest.TestCase):
 
         self.assertIn("WHERE `is_enabled` = 1", connection.cursor_obj.execute_calls[0])
         self.assertEqual([item["sku"] for item in payloads], ["SKU-1"])
-        self.assertEqual([item["field_name"] for item in payloads], ["中文报关品名"])
+        self.assertEqual([item["field_name"] for item in payloads], ["产品资料"])
+        self.assertEqual([item["raw_json"]["missing_fields"] for item in payloads], [["中文报关品名"]])
         self.assertTrue(connection.closed)
 
 
