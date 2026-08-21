@@ -150,23 +150,27 @@ def load_shop_mapping_for_current_slot(
     now = now or datetime.now()
     cache = cache or JsonCache()
     slot_key = shop_mapping_slot_key(now)
-    cached_mapping = _cache_get_mapping(cache, _slot_cache_key(slot_key))
+    latest_payload = _cache_get_mapping_payload(cache, "latest")
+    cached_mapping = _mapping_from_payload(latest_payload) if _payload_slot_key(latest_payload) == slot_key else None
     if cached_mapping is not None:
+        _prune_shop_mapping_cache(cache)
         return ShopMappingLoadResult(
             mapping=cached_mapping,
             loaded_rows=len(cached_mapping),
             slot_key=slot_key,
-            source="slot-cache",
+            source="latest-cache",
         )
 
     with _shop_mapping_lock(cache):
-        cached_mapping = _cache_get_mapping(cache, _slot_cache_key(slot_key))
+        latest_payload = _cache_get_mapping_payload(cache, "latest")
+        cached_mapping = _mapping_from_payload(latest_payload) if _payload_slot_key(latest_payload) == slot_key else None
         if cached_mapping is not None:
+            _prune_shop_mapping_cache(cache)
             return ShopMappingLoadResult(
                 mapping=cached_mapping,
                 loaded_rows=len(cached_mapping),
                 slot_key=slot_key,
-                source="slot-cache",
+                source="latest-cache",
             )
 
         attempt = cache.get("shop_mapping_attempt", slot_key, ttl_days=3650)
@@ -191,8 +195,8 @@ def load_shop_mapping_for_current_slot(
             "refreshed_at": now.isoformat(timespec="seconds"),
             "records": [asdict(record) for record in mapping.values()],
         }
-        cache.set("shop_mapping", _slot_cache_key(slot_key), payload)
         cache.set("shop_mapping", "latest", payload)
+        _prune_shop_mapping_cache(cache)
         cache.set(
             "shop_mapping_attempt",
             slot_key,
@@ -263,6 +267,7 @@ def shop_mapping_slot_key(now: datetime) -> str:
 def _latest_or_empty(cache: JsonCache, slot_key: str, warning: str) -> ShopMappingLoadResult:
     latest = _cache_get_mapping(cache, "latest")
     if latest is not None:
+        _prune_shop_mapping_cache(cache)
         return ShopMappingLoadResult(
             mapping=latest,
             loaded_rows=len(latest),
@@ -280,8 +285,22 @@ def _latest_or_empty(cache: JsonCache, slot_key: str, warning: str) -> ShopMappi
 
 
 def _cache_get_mapping(cache: JsonCache, key: str) -> dict[str, ShopMappingRecord] | None:
+    payload = _cache_get_mapping_payload(cache, key)
+    return _mapping_from_payload(payload)
+
+
+def _cache_get_mapping_payload(cache: JsonCache, key: str) -> dict[str, Any] | None:
     payload = cache.get("shop_mapping", key, ttl_days=3650)
     if not isinstance(payload, dict):
+        return None
+    records = payload.get("records")
+    if not isinstance(records, list):
+        return None
+    return payload
+
+
+def _mapping_from_payload(payload: dict[str, Any] | None) -> dict[str, ShopMappingRecord] | None:
+    if payload is None:
         return None
     records = payload.get("records")
     if not isinstance(records, list):
@@ -301,6 +320,25 @@ def _cache_get_mapping(cache: JsonCache, key: str) -> dict[str, ShopMappingRecor
         if record is not None:
             mapping[record.shop_name] = record
     return mapping
+
+
+def _payload_slot_key(payload: dict[str, Any] | None) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("slot_key") or "")
+
+
+def _prune_shop_mapping_cache(cache: JsonCache) -> None:
+    shop_mapping_dir = Path(cache.cache_dir) / "shop_mapping"
+    if not shop_mapping_dir.exists():
+        return
+    for path in shop_mapping_dir.glob("*.json"):
+        if path.name == "latest.json":
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 @contextmanager
@@ -340,11 +378,6 @@ def _is_stale_lock(lock_path: Path) -> bool:
         return time.time() - lock_path.stat().st_mtime > LOCK_STALE_SECONDS
     except FileNotFoundError:
         return False
-
-
-def _slot_cache_key(slot_key: str) -> str:
-    return f"slot-{slot_key}"
-
 
 def _record_from_row(row: dict[str, Any]) -> ShopMappingRecord | None:
     shop_name = _normalize_shop_name(row.get("shop_name"))

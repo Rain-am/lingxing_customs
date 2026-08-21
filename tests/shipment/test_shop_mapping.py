@@ -100,12 +100,48 @@ class ShopMappingTest(unittest.TestCase):
 
             first = load_shop_mapping_for_current_slot(datetime(2026, 7, 30, 10, 5), client=client, cache=cache)
             second = load_shop_mapping_for_current_slot(datetime(2026, 7, 30, 11, 5), client=client, cache=cache)
+            cache_files = _shop_mapping_cache_files(Path(tmpdir))
 
         self.assertTrue(first.refreshed)
         self.assertEqual(first.source, "api")
-        self.assertEqual(second.source, "slot-cache")
+        self.assertEqual(second.source, "latest-cache")
         self.assertEqual(client.call_count, 1)
         self.assertEqual(second.mapping["SHOP-A"].final_customer, "客户A")
+        self.assertEqual(cache_files, ["latest.json"])
+
+    def test_next_slot_refreshes_and_keeps_only_latest_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache = JsonCache(cache_dir=Path(tmpdir))
+            first_client = FakeShopMappingClient(
+                {
+                    "SHOP-A": ShopMappingRecord(
+                        shop_name="SHOP-A",
+                        purchase_entity="采购主体A",
+                        final_customer="客户A",
+                    )
+                }
+            )
+            second_client = FakeShopMappingClient(
+                {
+                    "SHOP-B": ShopMappingRecord(
+                        shop_name="SHOP-B",
+                        purchase_entity="采购主体B",
+                        final_customer="客户B",
+                    )
+                }
+            )
+
+            first = load_shop_mapping_for_current_slot(datetime(2026, 7, 30, 10, 5), client=first_client, cache=cache)
+            second = load_shop_mapping_for_current_slot(datetime(2026, 7, 30, 14, 5), client=second_client, cache=cache)
+            cache_files = _shop_mapping_cache_files(Path(tmpdir))
+
+        self.assertEqual(first.source, "api")
+        self.assertEqual(second.source, "api")
+        self.assertEqual(first_client.call_count, 1)
+        self.assertEqual(second_client.call_count, 1)
+        self.assertNotIn("SHOP-A", second.mapping)
+        self.assertEqual(second.mapping["SHOP-B"].final_customer, "客户B")
+        self.assertEqual(cache_files, ["latest.json"])
 
     def test_refresh_failure_uses_latest_cache_and_does_not_retry_same_slot(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -264,6 +300,11 @@ class FakeResponse:
 
     def read(self) -> bytes:
         return json.dumps(self.payload, ensure_ascii=False).encode("utf-8")
+
+
+def _shop_mapping_cache_files(cache_root: Path) -> list[str]:
+    path = cache_root / "v2" / "shop_mapping"
+    return sorted(item.name for item in path.glob("*.json"))
 
 
 if __name__ == "__main__":
