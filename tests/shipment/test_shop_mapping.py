@@ -165,6 +165,26 @@ class ShopMappingTest(unittest.TestCase):
         self.assertEqual(row.final_customer, "接口最终客户")
         self.assertFalse(any(issue.field_name == "最终客户" for issue in workbook_data.issue_rows))
 
+    def test_apply_mapping_falls_back_to_department_for_purchase_entity(self) -> None:
+        raw = _raw_data(seller_name="OPPA-US")
+        mapping = {
+            "OPPA-US": ShopMappingRecord(
+                shop_name="OPPA-US",
+                department="业务二部",
+                final_customer="YILAITE TRADING CO.,LIMITED",
+            )
+        }
+
+        loaded_rows, applied_rows = apply_shop_mapping(raw, mapping)
+        workbook_data = build_customs_workbook_data(raw)
+        row = workbook_data.customs_rows[0]
+
+        self.assertEqual(loaded_rows, 1)
+        self.assertEqual(applied_rows, 1)
+        self.assertEqual(row.purchase_entity, "义乌市雅畅进出口有限公司")
+        self.assertEqual(row.final_customer, "YILAITE TRADING CO.,LIMITED")
+        self.assertFalse(any(issue.field_name == "采购主体" for issue in workbook_data.issue_rows))
+
     def test_apply_mapping_leaves_unmatched_shop_blank_and_reports_issues(self) -> None:
         raw = _raw_data(seller_name="SHOP-MISSING")
 

@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 from src.common.cache import JsonCache
 from src.common.lingxing_client import _load_dotenv
 from src.shipment.models import RawCustomsData
+from src.shipment.seller_department import purchase_entity_for_seller
 
 
 DEFAULT_API_ID = "aOeOfPzADG"
@@ -214,7 +215,7 @@ def apply_shop_mapping(raw_data: RawCustomsData, mapping: dict[str, ShopMappingR
 
     for item in raw_data.shipment_items:
         record = mapping.get(_normalize_shop_name(item.seller_name))
-        purchase_entity = record.purchase_entity if record is not None else ""
+        purchase_entity = _purchase_entity_from_record(record) if record is not None else ""
         final_customer = record.final_customer if record is not None else ""
         if record is not None:
             applied_items += 1
@@ -238,6 +239,12 @@ def apply_shop_mapping(raw_data: RawCustomsData, mapping: dict[str, ShopMappingR
     raw_data.shipment_items = updated_items
     raw_data.purchase_batches = updated_batches
     return len(mapping), applied_items
+
+
+def _purchase_entity_from_record(record: ShopMappingRecord) -> str:
+    if record.purchase_entity:
+        return record.purchase_entity
+    return purchase_entity_for_seller(record.shop_name, {record.shop_name: record.department})
 
 
 def shop_mapping_slot_key(now: datetime) -> str:
