@@ -53,6 +53,28 @@ DEFAULT_PROTECTED_CUSTOMS_ROW_IDS = {
     "0ee5728c8df7367d",
 }
 
+DEFAULT_PROTECTED_CUSTOMS_SHIPMENT_NOS = {
+    "SP260821045",
+    "SP260821051",
+    "SP260821052",
+    "SP260821053",
+    "SP260821054",
+}
+
+DEFAULT_PROTECTED_CUSTOMS_SKUS = {
+    "PK-3-P-LGG-L9-F-H-D-L-XL-03",
+    "PK-3-P-LGG-L9-F-H-D-L-XL-06",
+    "PK-3-P-LGG-L9-F-H-D-S-M-02",
+    "PK-3-P-LGG-L9-F-H-D-S-M-03",
+    "PK-3-P-LGG-L9-F-H-D-S-M-05",
+}
+
+DEFAULT_PROTECTED_CUSTOMS_ROW_KEYS = {
+    (shipment_no, sku)
+    for shipment_no in DEFAULT_PROTECTED_CUSTOMS_SHIPMENT_NOS
+    for sku in DEFAULT_PROTECTED_CUSTOMS_SKUS
+}
+
 SSHTunnelForwarderFactory: Any | None = None
 PyMySQLModule: Any | None = None
 
@@ -143,7 +165,12 @@ def export_customs_rows_to_mysql(
 ) -> MySQLExportResult:
     config = config or MySQLConfig.from_env()
     protected_ids = _protected_customs_row_ids()
-    writable_rows = [row for row in data.customs_rows if row.id not in protected_ids]
+    protected_keys = _protected_customs_row_keys()
+    writable_rows = [
+        row
+        for row in data.customs_rows
+        if row.id not in protected_ids and _customs_row_key(row) not in protected_keys
+    ]
     rows = [mysql_row_values(row) for row in writable_rows]
     protected_skipped_rows = len(data.customs_rows) - len(writable_rows)
     stale_deleted_by_source: dict[str, int] = {}
@@ -183,8 +210,36 @@ def _protected_customs_row_ids() -> set[str]:
     return DEFAULT_PROTECTED_CUSTOMS_ROW_IDS | configured
 
 
+def _protected_customs_row_keys() -> set[tuple[str, str]]:
+    configured = set(_split_env_pairs(os.getenv("CUSTOMS_PROTECTED_SHIPMENT_SKUS", "")))
+    return DEFAULT_PROTECTED_CUSTOMS_ROW_KEYS | configured
+
+
+def _customs_row_key(row: CustomsRow) -> tuple[str, str]:
+    return (str(row.shipment_no or "").strip(), str(row.sku or "").strip())
+
+
 def _split_env_values(value: str) -> list[str]:
     return [part.strip() for part in re.split(r"[\s,;]+", str(value or "")) if part.strip()]
+
+
+def _split_env_pairs(value: str) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for part in _split_env_values(value):
+        separator = next((candidate for candidate in ("|", ":", "=") if candidate in part), "")
+        if not separator:
+            raise MySQLExportError(
+                "Invalid CUSTOMS_PROTECTED_SHIPMENT_SKUS entry "
+                f"{part!r}; use 发货单号|SKU, separated by commas"
+            )
+        shipment_no, sku = (piece.strip() for piece in part.split(separator, 1))
+        if not shipment_no or not sku:
+            raise MySQLExportError(
+                "Invalid CUSTOMS_PROTECTED_SHIPMENT_SKUS entry "
+                f"{part!r}; use 发货单号|SKU, separated by commas"
+            )
+        pairs.append((shipment_no, sku))
+    return pairs
 
 
 def preflight_customs_rows_mysql(

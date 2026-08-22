@@ -346,6 +346,37 @@ class ExportMySQLTest(unittest.TestCase):
         upsert_rows = fake_pymysql.connection.cursor_obj.executemany_calls[0][1]
         self.assertEqual([row[0] for row in upsert_rows], ["normal123"])
 
+    def test_export_skips_protected_shipment_sku_rows_without_deleting_them_as_stale(self) -> None:
+        fake_pymysql = FakePyMySQL()
+        fake_pymysql.connection = FakeConnection(
+            columns=[column for _, column in MYSQL_COLUMNS],
+            indexes=[{"Key_name": "PRIMARY", "Non_unique": 0, "Seq_in_index": 1, "Column_name": "id"}],
+            delete_rowcounts=[0],
+        )
+        protected = sample_row()
+        protected.id = "protected-by-key"
+        protected.shipment_no = "SP260821045"
+        protected.sku = "PK-3-P-LGG-L9-F-H-D-L-XL-03"
+        normal = sample_row()
+        normal.id = "normal123"
+        normal.shipment_no = "SP260821045"
+        normal.sku = "NOT-PROTECTED"
+        config = mysql_config(use_ssh_tunnel=False)
+
+        with patch.object(export_mysql, "PyMySQLModule", fake_pymysql), patch.object(export_mysql, "_today", return_value=date(2026, 8, 22)):
+            result = export_customs_rows_to_mysql(
+                CustomsWorkbookData(customs_rows=[protected, normal], issue_rows=[], purchase_split_rows=[]),
+                config,
+            )
+
+        self.assertEqual(result.upserted_rows, 1)
+        self.assertEqual(result.protected_skipped_rows, 1)
+        delete_calls = [(sql, params) for sql, params in fake_pymysql.connection.cursor_obj.execute_calls if sql.startswith("DELETE FROM")]
+        self.assertEqual(delete_calls[0][1], ["2026-06-09", "SP%", "normal123", "protected-by-key"])
+        self.assertEqual(len(fake_pymysql.connection.cursor_obj.executemany_calls), 1)
+        upsert_rows = fake_pymysql.connection.cursor_obj.executemany_calls[0][1]
+        self.assertEqual([row[0] for row in upsert_rows], ["normal123"])
+
     def test_export_empty_batch_skips_retention_by_default(self) -> None:
         fake_pymysql = FakePyMySQL()
         fake_pymysql.connection = FakeConnection(
