@@ -51,6 +51,19 @@ MYSQL_COLUMNS = [
 DEFAULT_PROTECTED_CUSTOMS_ROW_IDS = {
     "65d284a91e0aa7be",
     "0ee5728c8df7367d",
+    "4c40401ebad6e1e3",
+    "b189c38afb73f32b",
+    "bf4d648b1f8d060f",
+    "3072064fbc50df68",
+    "3a37da1af1226c48",
+    "d7cd6b63329be7a4",
+    "6c562ac919fcf1d8",
+    "975c2fae71951d78",
+    "7b1f201d151196c6",
+    "9600277cb0180225",
+    "b40d400610f291c2",
+    "0fb955b8706bf888",
+    "34db600b0f34bf41",
 }
 
 DEFAULT_PROTECTED_CUSTOMS_SHIPMENT_NOS = {
