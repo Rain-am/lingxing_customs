@@ -18,6 +18,7 @@ from .models import (
 
 PENDING = "待确认"
 ZERO_PURCHASE_UNIT_PRICE = Decimal("0")
+SPLIT_SUPPLIER_ISSUE = "供应商名称存在多个候选，请确认采购单供应商"
 
 
 def build_customs_workbook_data(raw_data: RawCustomsData) -> CustomsWorkbookData:
@@ -43,6 +44,8 @@ def build_customs_workbook_data(raw_data: RawCustomsData) -> CustomsWorkbookData
             issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "采购主体", "未匹配店铺映射：请检查接口 shop_name、cgzt"))
         if not item.supplier:
             issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "供应商", "未匹配采购单资料"))
+        elif _has_split_supplier(item.supplier):
+            issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "供应商", SPLIT_SUPPLIER_ISSUE))
         if not item.domestic_source:
             issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "境内货源地", "未匹配供应商地址"))
 
@@ -72,6 +75,8 @@ def _append_batch_rows(
                 f"采购批次数量合计 {normalized_quantity} 与发货数量 {item.quantity} 不一致",
             )
         )
+    if _has_split_supplier(_combined_text(batch.supplier for batch in normalized_batches) or item.supplier):
+        issues.append(IssueRow(item.shipment_no, item.box_no, item.sku, "供应商", SPLIT_SUPPLIER_ISSUE))
 
     for batch in item_batches:
         if batch.quantity_missing:
@@ -230,6 +235,10 @@ def _combined_text(values) -> str:
         if text not in distinct:
             distinct.append(text)
     return " / ".join(distinct)
+
+
+def _has_split_supplier(value: str) -> bool:
+    return "/" in str(value or "")
 
 
 def _combined_price(batches: list[PurchaseBatch], item: ShipmentItem) -> Decimal | str:

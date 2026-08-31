@@ -69,6 +69,61 @@ class BuildCustomsRowsTest(unittest.TestCase):
         self.assertTrue(all(len(row.shipment_date) == 7 for row in workbook_data.customs_rows))
         self.assertTrue(all(row.id for row in workbook_data.customs_rows))
 
+    def test_split_supplier_name_creates_supplier_issue(self) -> None:
+        raw = RawCustomsData(
+            shipment_items=[
+                ShipmentItem(
+                    shipment_date="2026-08-24",
+                    shipment_no="SP260824001",
+                    sku="SKU1",
+                    quantity=Decimal("2"),
+                    product_name="Product",
+                    box_no="BOX1",
+                    purchase_entity="Purchaser",
+                    domestic_source="Source",
+                    purchase_unit_price=Decimal("1"),
+                )
+            ],
+            sku_infos={
+                "SKU1": SkuInfo(
+                    sku="SKU1",
+                    product_name="Product",
+                    customs_name_cn="Customs",
+                    unit="pcs",
+                    gross_weight=Decimal("1"),
+                    net_weight=Decimal("0.8"),
+                    outer_box_size="10*10*10",
+                )
+            },
+            purchase_batches=[
+                PurchaseBatch(
+                    shipment_no="SP260824001",
+                    sku="SKU1",
+                    box_no="BOX1",
+                    quantity=Decimal("1"),
+                    supplier="供应商A",
+                    domestic_source="Source",
+                    purchase_unit_price=Decimal("1"),
+                ),
+                PurchaseBatch(
+                    shipment_no="SP260824001",
+                    sku="SKU1",
+                    box_no="BOX1",
+                    quantity=Decimal("1"),
+                    supplier="供应商B",
+                    domestic_source="Source",
+                    purchase_unit_price=Decimal("1"),
+                ),
+            ],
+        )
+
+        workbook_data = build_customs_workbook_data(raw)
+
+        self.assertEqual(workbook_data.customs_rows[0].supplier, "供应商A / 供应商B")
+        supplier_issues = [issue for issue in workbook_data.issue_rows if issue.field_name == "供应商"]
+        self.assertEqual(len(supplier_issues), 1)
+        self.assertEqual(supplier_issues[0].issue, "供应商名称存在多个候选，请确认采购单供应商")
+
     def test_row_id_is_stable_for_shipment_sku_and_box(self) -> None:
         raw = RawCustomsData(
             shipment_items=[
