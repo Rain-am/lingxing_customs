@@ -67,6 +67,15 @@ DEFAULT_PROTECTED_CUSTOMS_ROW_IDS = {
     "cc9faa15be1d306d",
     "d509b3e4397061b9",
     "eb4c649e3c103b21",
+    "35ab01a363836307",
+    "efa5d1b1c74dbdce",
+    "c5cdb832082e9f17",
+    "cc8a6af55665aee1",
+    "01a876971c505eab",
+    "7e5279937368b778",
+    "b77d717b95bfeac1",
+    "712fa122f2c123a3",
+    "f1be791fe86dd2ae",
 }
 
 DEFAULT_PROTECTED_CUSTOMS_SHIPMENT_NOS = {
