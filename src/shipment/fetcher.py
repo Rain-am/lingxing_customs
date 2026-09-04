@@ -16,6 +16,11 @@ from src.shipment.models import PurchaseBatch, RawCustomsData, ShipmentItem, Sku
 from .base import CustomsDataSource
 
 
+_AMAZON_CARTON_CODE_RE = re.compile(r"FBA[A-Z0-9]+U\d{6}", re.IGNORECASE)
+_BOX_NO_KEYS = ("box_no", "boxNo", "carton_no", "case_no", "box_codes", "box_range")
+_BOX_COUNT_KEYS = ("box_num", "box_count", "boxCount", "carton_count")
+
+
 class LingxingApiDataSource(CustomsDataSource):
     def __init__(self, client: LingxingClient | None = None, refresh_cache: bool = False) -> None:
         self.client = client or LingxingClient()
@@ -395,6 +400,7 @@ class LingxingApiDataSource(CustomsDataSource):
 
 def _map_shipment_item(header: dict[str, Any], payload: dict[str, Any]) -> ShipmentItem:
     box_info = _box_info_for_item(payload)
+    box_no = str(_first(payload, box_info, *_BOX_NO_KEYS) or "")
     return ShipmentItem(
         shipment_date=_date_text(
             _first(header, payload, "pick_time", "shipment_time_second", "shipment_time", "shipment_date", "shipping_date", "delivery_date", "shipDate", "shipped_at")
@@ -406,8 +412,8 @@ def _map_shipment_item(header: dict[str, Any], payload: dict[str, Any]) -> Shipm
         dest_country=str(_first(payload, header, "nation") or ""),
         product_name=str(_first(payload, header, "product_name", "product_name_cn", "name", "productName") or ""),
         updated_at=_updated_at_from_auxs(payload),
-        box_no=str(_first(payload, box_info, "box_no", "boxNo", "carton_no", "case_no", "box_codes", "box_range") or ""),
-        box_count=decimal_or_zero(_first(payload, box_info, "box_count", "boxCount", "carton_count", "box_num") or 1),
+        box_no=box_no,
+        box_count=_carton_count_for_payload(payload, box_info, box_no),
         pieces=decimal_or_zero(_first(payload, header, "pieces", "copy_count", "copies") or 1),
         logistics_provider=str(_first(payload, header, "logistics_provider", "carrier", "logistics_provider_name", "logistics_company") or ""),
         logistics_channel=str(_first(payload, header, "logistics_channel", "logistics_channel_name", "channel", "shipping_channel") or ""),
@@ -483,7 +489,9 @@ def _outer_box_size_from_item(payload: dict[str, Any], box_info: dict[str, Any])
 
 def _box_gross_weight(box_info: dict[str, Any]) -> Decimal | None:
     weight = _optional_decimal(_first(box_info, {}, "cg_box_weight", "box_weight", "weight"))
-    box_num = decimal_or_zero(_first(box_info, {}, "box_num", "box_count", "boxCount") or 1)
+    box_num = _carton_count_from_actual_box_no(str(_first(box_info, {}, *_BOX_NO_KEYS) or "")) or decimal_or_zero(
+        _first(box_info, {}, *_BOX_COUNT_KEYS) or 1
+    )
     if weight is None:
         return None
     return weight * box_num
@@ -493,7 +501,7 @@ def _box_volume_cbm(payload: dict[str, Any], box_info: dict[str, Any]) -> Decima
     length = _optional_decimal(_first_nonzero(box_info, payload, "cg_box_length", "box_length_cm", "length", "outer_length"))
     width = _optional_decimal(_first_nonzero(box_info, payload, "cg_box_width", "box_width_cm", "width", "outer_width"))
     height = _optional_decimal(_first_nonzero(box_info, payload, "cg_box_height", "box_height_cm", "height", "outer_height"))
-    box_num = decimal_or_zero(_first(box_info, payload, "box_num", "box_count", "boxCount") or 1)
+    box_num = _carton_count_for_payload(payload, box_info)
     if length is None or width is None or height is None:
         return None
     return (box_num * length * width * height) / Decimal("1000000")
@@ -718,8 +726,23 @@ def _expand_item_by_boxes(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _packing_carton_count_for_payload(payload: dict[str, Any]) -> Decimal:
     box_info = _box_info_for_item(payload)
-    box_no = _display_box_no(str(_first(payload, box_info, "box_no", "boxNo", "carton_no", "case_no", "box_codes", "box_range") or ""))
-    return _box_count_from_box_no(box_no) or decimal_or_zero(_first(payload, box_info, "box_count", "boxCount", "carton_count", "box_num") or 1)
+    return _carton_count_for_payload(payload, box_info)
+
+
+def _carton_count_for_payload(payload: dict[str, Any], box_info: dict[str, Any], box_no: str | None = None) -> Decimal:
+    if box_no is None:
+        box_no = str(_first(payload, box_info, *_BOX_NO_KEYS) or "")
+    return _carton_count_from_actual_box_no(box_no) or decimal_or_zero(_first(box_info, payload, *_BOX_COUNT_KEYS) or 1)
+
+
+def _carton_count_from_actual_box_no(box_no: str) -> Decimal | None:
+    display_box_no = _display_box_no(str(box_no or ""))
+    count = _box_count_from_box_no(display_box_no)
+    if count is not None:
+        return count
+    if _AMAZON_CARTON_CODE_RE.fullmatch(display_box_no):
+        return Decimal("1")
+    return None
 
 
 def _matching_box_infos_for_item(payload: dict[str, Any]) -> list[tuple[dict[str, Any], dict[str, Any]]]:

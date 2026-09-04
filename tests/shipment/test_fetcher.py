@@ -668,6 +668,76 @@ class LingxingApiDataSourceTest(unittest.TestCase):
         self.assertEqual(raw.shipment_items[0].volume, Decimal("0.0733083945"))
         self.assertEqual(raw.purchase_batches[0].box_no, "ITEM-BOX-1")
 
+    def test_single_fba_carton_code_overrides_item_box_count(self) -> None:
+        class SingleCartonClient(EnrichmentClient):
+            def post(self, endpoint, payload):
+                self.post_payloads.append((endpoint, payload))
+                if endpoint.endswith("getInboundShipmentList"):
+                    rows = [
+                        {
+                            "shipment_sn": "SP260903042",
+                            "pick_time": "2026-09-03",
+                            "status": 1,
+                            "wname": WAREHOUSE,
+                        }
+                    ] if payload.get("page", 1) == 1 else []
+                    return {"code": 0, "data": {"list": rows}}
+                if endpoint.endswith("getInboundShipmentListMwsDetail"):
+                    return {
+                        "code": 0,
+                        "data": {
+                            "items": [
+                                {
+                                    "sku": "210920140744",
+                                    "quantity_shipped": 90,
+                                    "num": 90,
+                                    "sname": "Purpleto-CA",
+                                    "box_no": "FBA19NQ15MDDU000010",
+                                    "box_count": 2,
+                                    "sku_box_key": "SKU-BOX-10",
+                                    "shipment_id": "FBA19NQ15MDD",
+                                    "msku": "210920140744",
+                                    "fba_stock_cost": "1.0000",
+                                    "purchase_items": [{"purchase_sn": "PO260525005", "quantity": 90}],
+                                }
+                            ],
+                            "box_list": [
+                                {
+                                    "box_num": 1,
+                                    "cg_box_weight": "15.0000",
+                                    "cg_box_length": "42.00",
+                                    "cg_box_width": "52.00",
+                                    "cg_box_height": "32.00",
+                                    "box_codes": "FBA19NQ15MDDU000010",
+                                    "box_skus": [
+                                        {
+                                            "sku_box_key": "SKU-BOX-10",
+                                            "sku": "210920140744",
+                                            "shipment_id": "FBA19NQ15MDD",
+                                            "msku": "210920140744",
+                                            "quantity_in_case": 90,
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                return super().post(endpoint, payload)
+
+        raw = LingxingApiDataSource(client=SingleCartonClient()).load("2026-09-03")
+
+        item = raw.shipment_items[0]
+        self.assertEqual(item.shipment_no, "SP260903042")
+        self.assertEqual(item.sku, "210920140744")
+        self.assertEqual(item.box_no, "FBA19NQ15MDDU000010")
+        self.assertEqual(item.box_count, Decimal("1"))
+        self.assertEqual(item.total_gross_weight, Decimal("15.0000"))
+        self.assertEqual(item.volume, Decimal("0.069888"))
+
+        row = build_customs_workbook_data(raw).customs_rows[0]
+        self.assertEqual(row.box_count, Decimal("1"))
+        self.assertEqual(row.total_net_weight, Decimal("14.0000"))
+
     def test_detail_falls_back_to_box_list_when_item_box_no_is_blank(self) -> None:
         class BlankItemBoxClient(EnrichmentClient):
             def post(self, endpoint, payload):
@@ -924,7 +994,7 @@ class LingxingApiDataSourceTest(unittest.TestCase):
         raw = LingxingApiDataSource(client=PackedMultiCartonClient()).load("2026-06-09")
 
         self.assertEqual([item.quantity for item in raw.shipment_items], [Decimal("21"), Decimal("44")])
-        self.assertEqual([item.box_count for item in raw.shipment_items], [Decimal("1"), Decimal("99")])
+        self.assertEqual([item.box_count for item in raw.shipment_items], [Decimal("1"), Decimal("2")])
         self.assertEqual([batch.quantity for batch in raw.purchase_batches], [Decimal("21"), Decimal("44")])
 
         customs_rows = build_customs_workbook_data(raw).customs_rows
