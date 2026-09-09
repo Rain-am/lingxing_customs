@@ -30,6 +30,51 @@ class ShopMappingTest(unittest.TestCase):
             "733122714903D797E2AF29D81634107D",
         )
 
+    def test_blank_api_id_env_uses_default(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "CUSTOMS_SHOP_MAPPING_URL": "http://127.0.0.1/api/assetOpenApi/queryData",
+                "CUSTOMS_SHOP_MAPPING_APP_KEY": "app-key",
+                "CUSTOMS_SHOP_MAPPING_APP_SECRET": "app-secret",
+                "CUSTOMS_SHOP_MAPPING_API_ID": "",
+            },
+            clear=True,
+        ):
+            config = ShopMappingConfig.from_env()
+
+        self.assertEqual(config.api_id, "aOeOfPzADG")
+
+    def test_blank_mapping_url_env_uses_default(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "CUSTOMS_SHOP_MAPPING_URL": "",
+                "CUSTOMS_SHOP_MAPPING_APP_KEY": "app-key",
+                "CUSTOMS_SHOP_MAPPING_APP_SECRET": "app-secret",
+                "CUSTOMS_SHOP_MAPPING_API_ID": "api-id",
+            },
+            clear=True,
+        ):
+            config = ShopMappingConfig.from_env()
+
+        self.assertEqual(config.url, "https://www.foresight.radiancewave.cn/api/assetOpenApi/queryData")
+
+    def test_http_mapping_url_env_uses_https_default(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "CUSTOMS_SHOP_MAPPING_URL": "http://www.foresight.radiancewave.cn:80/api/assetOpenApi/queryData",
+                "CUSTOMS_SHOP_MAPPING_APP_KEY": "app-key",
+                "CUSTOMS_SHOP_MAPPING_APP_SECRET": "app-secret",
+                "CUSTOMS_SHOP_MAPPING_API_ID": "api-id",
+            },
+            clear=True,
+        ):
+            config = ShopMappingConfig.from_env()
+
+        self.assertEqual(config.url, "https://www.foresight.radiancewave.cn/api/assetOpenApi/queryData")
+
     def test_client_fetches_pages_and_last_duplicate_shop_wins(self) -> None:
         calls = []
 

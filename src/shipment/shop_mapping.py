@@ -19,6 +19,7 @@ from src.shipment.seller_department import purchase_entity_for_seller
 
 
 DEFAULT_API_ID = "aOeOfPzADG"
+DEFAULT_URL = "https://www.foresight.radiancewave.cn/api/assetOpenApi/queryData"
 LOCK_TIMEOUT_SECONDS = 600
 LOCK_STALE_SECONDS = 900
 
@@ -41,10 +42,10 @@ class ShopMappingConfig:
     def from_env(cls) -> "ShopMappingConfig":
         _load_dotenv()
         config = cls(
-            url=os.getenv("CUSTOMS_SHOP_MAPPING_URL", ""),
+            url=_mapping_url_from_env(os.getenv("CUSTOMS_SHOP_MAPPING_URL")),
             app_key=os.getenv("CUSTOMS_SHOP_MAPPING_APP_KEY", ""),
             app_secret=os.getenv("CUSTOMS_SHOP_MAPPING_APP_SECRET", ""),
-            api_id=os.getenv("CUSTOMS_SHOP_MAPPING_API_ID", DEFAULT_API_ID),
+            api_id=os.getenv("CUSTOMS_SHOP_MAPPING_API_ID") or DEFAULT_API_ID,
             page_size=_clamp_page_size(os.getenv("CUSTOMS_SHOP_MAPPING_PAGE_SIZE", "200")),
             timeout_seconds=int(os.getenv("CUSTOMS_SHOP_MAPPING_TIMEOUT_SECONDS", "30")),
             max_retries=max(1, int(os.getenv("CUSTOMS_SHOP_MAPPING_MAX_RETRIES", "3"))),
@@ -424,6 +425,18 @@ def _normalize_shop_name(value: Any) -> str:
 
 def _cell_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _mapping_url_from_env(value: str | None) -> str:
+    url = str(value or "").strip()
+    if not url:
+        return DEFAULT_URL
+    if url in {
+        "http://www.foresight.radiancewave.cn/api/assetOpenApi/queryData",
+        "http://www.foresight.radiancewave.cn:80/api/assetOpenApi/queryData",
+    }:
+        return DEFAULT_URL
+    return url
 
 
 def _clamp_page_size(value: str) -> int:
