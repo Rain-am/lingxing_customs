@@ -120,6 +120,7 @@ vim .env
 - `MYSQL_PRODUCT_TABLE=customs_product`
 - `CUSTOMS_PROTECTED_ROW_IDS`：可选，填入需要定时同步跳过 upsert 的报关行 `id`，多个值可用逗号分隔
 - `CUSTOMS_PROTECTED_SHIPMENT_SKUS`：可选，填入需要定时同步跳过 upsert 的 `发货单号|SKU`，多个值可用逗号分隔
+- `CUSTOMS_PROTECTED_SHIPMENT_BOXES`：可选，填入需要定时同步跳过 upsert 的 `发货单号|箱号`，多个值可用逗号分隔
 
 如需把报关服务器检测到的数据维护问题推送到供应链平台，继续配置：
 
